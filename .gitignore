@@ -1,3 +1,24 @@
-.env
+# Python Virtual Environment (De map 'venv' die je net maakte)
+venv/
+env/
+ENV/
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Omgevingsvariabelen (Wachtwoorden en API keys!)
+.env
+
+# Docker
+.dockerignore
+
+# IDE Instellingen (VS Code specifiek)
+.vscode/
+.idea/
+.claude
+
+# OS specifieke bestanden
+Thumbs.db
+.DS_Store
+
+# Log bestanden
+*.log
