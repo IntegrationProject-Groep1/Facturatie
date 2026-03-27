@@ -8,6 +8,9 @@ __pycache__/
 # Omgevingsvariabelen (Wachtwoorden en API keys!)
 .env
 
+# Node (preventief)
+node_modules/
+
 # Docker
 .dockerignore
 
@@ -22,3 +25,8 @@ Thumbs.db
 
 # Log bestanden
 *.log
+
+# Python packaging
+*.egg-info/
+build/
+dist/
