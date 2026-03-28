@@ -4,6 +4,7 @@ env/
 ENV/
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 # Omgevingsvariabelen (Wachtwoorden en API keys!)
 .env
