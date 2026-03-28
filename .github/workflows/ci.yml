@@ -1,10 +1,13 @@
-name: CI
+name: CI Pipeline
 
 on:
   push:
-    branches: 
+    branches:
       - main
       - dev
+      - prod
+    tags:
+      - 'v*'
 
 jobs:
   lint-and-test:
