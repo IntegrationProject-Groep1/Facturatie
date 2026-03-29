@@ -1,65 +1,59 @@
-# Facturatie
+# Team Facturatie
 
-RabbitMQ integration service for FOSSBilling. Handles sending and receiving billing messages over a RabbitMQ queue.
+### Over het team
 
-## Project structure
+Wij zijn het Facturatie‑team binnen het Integration Project. Onze verantwoordelijkheid is het automatisch verwerken, genereren en beheren van facturen. Wij zorgen ervoor dat inschrijvingen, consumpties, betalingen en annuleringen correct worden verwerkt in FossBilling, het facturatiesysteem van het project. Ons team staat centraal in de financiële afhandeling van het event: wij zorgen dat bedrijven en deelnemers correcte, tijdige en overzichtelijke facturen ontvangen.
 
-```
-Facturatie/
-├── conftest.py                  # Pytest path configuration
-├── requirements.txt
-├── .env                         # RabbitMQ credentials (not committed)
-├── docs/
-│   └── devlog.md                # Development log
-├── src/
-│   └── services/
-│       ├── rabbitmq_sender.py   # Builds and publishes XML messages
-│       └── rabbitmq_receiver.py # Consumes, validates, and routes messages
-└── tests/
-    └── test_validate_message.py # Unit tests for validation logic
-```
+### Wat ons systeem doet
 
-## Setup
+Ons systeem luistert naar berichten die CRM doorstuurt via RabbitMQ. Op basis van deze berichten voeren wij de volgende taken uit:
 
-```bash
-pip install -r requirements.txt
-```
+**1. Verwerken van inschrijvingen**
 
-Create a `.env` file in the project root:
+Wanneer CRM een inschrijving doorstuurt, maken wij automatisch:
+- een factuur voor bedrijven
+- een bevestiging naar Mailing
+  
+**2. Verwerken van consumpties**
 
-```
-RABBITMQ_HOST=localhost
-RABBITMQ_PORT=30000
-RABBITMQ_USER=guest
-RABBITMQ_PASSWORD=guest
-```
+CRM stuurt consumptie‑informatie door die afkomstig is van de kassa.
+Wij voegen deze items toe aan de openstaande factuur van het bedrijf.
 
-## Running
+**3. Verwerken van betalingen**
 
-```bash
-# Send a test message in src/services
-python rabbitmq_sender.py
+Wanneer CRM meldt dat een inschrijving aan de kassa is betaald:
+- zetten wij de factuurstatus op betaald
+- sturen wij een bevestiging naar Mailingµ
+  
+**4. Verwerken van annuleringen**
 
-# Start the receiver in src/services
-python rabbitmq_receiver.py
-```
+Bij annuleringen maken wij automatisch een creditnota aan.
 
-## Tests
+**5. Automatische facturatie na het event**
 
-```bash
-python -m pytest tests/ -v
-```
+Wanneer het event is afgelopen:
+- sluiten wij alle openstaande facturen
+- sturen wij ze door naar Mailing
+- bedrijven ontvangen hun volledige factuur (inschrijvingen + consumpties)
 
-## Message types
+**6. Monitoring & betrouwbaarheid**
 
-| Type | Description |
-|---|---|
-| `CONSUMPTION_ORDER` | Order placed at a bar/kassa |
-| `PAYMENT_REGISTERED` | Payment confirmation (requires `correlation_id`) |
-| `HEARTBEAT` | Health check message |
+Ons systeem stuurt:
+- heartbeats 
+- error logs naar de DLQ bij foutieve berichten
+- meldingen wanneer het facturatiesysteem uitvalt
+  
+### Foutafhandeling
 
-Invalid messages (bad VAT rate, missing fields, wrong version) are forwarded to `facturatie.dlq`.
+Wanneer een bericht ontbrekende velden heeft, niet aan de XSD voldoet, een onbekende enum bevat of niet verwerkt kan worden in FossBilling dan sturen wij het naar de Dead Letter Queue (DLQ). Het monitoringteam wordt automatisch verwittigd bij kritieke fouten.
 
-## Dev log
+### Waarom dit project belangrijk is
 
-See [docs/devlog.md](docs/devlog.md) for a full history of changes.
+Ons systeem zorgt ervoor dat:
+- bedrijven correcte facturen ontvangen
+- deelnemers tijdig bevestigingen krijgen
+- financiële gegevens niet verloren gaan
+- het event administratief vlot verloopt
+- alle teams op elkaar afgestemd blijven
+  
+Wij zijn de financiële backbone van het hele event.
