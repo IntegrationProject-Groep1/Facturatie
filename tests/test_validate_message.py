@@ -2,19 +2,20 @@ import pytest
 import xml.etree.ElementTree as ET
 from src.services.rabbitmq_receiver import validate_message
 
+
 def build_xml(
-    msg_type: str = "CONSUMPTION_ORDER",
+    msg_type: str = "consumption_order",
     msg_id: str = "f47ac10b-58cc-4372-a567-0e02b2c3d479",
     version: str = "2.0",
     timestamp: str = "2026-02-24T18:30:00Z",
-    source: str = "Kassa_Bar_01",
+    source: str = "kassa_bar_01",
     is_company_linked: str = "false",
     company_id: str = "",
     company_name: str = "",
     vat_rate: str = "21",
     correlation_id: str = ""
 ) -> ET.Element:
-    """Helper that builds a minimal valid XML element for testing."""
+    """Helper that builds a minimal valid XML element for testing (XML Naming Standard)."""
     company_id_tag = f"<company_id>{company_id}</company_id>" if company_id else ""
     company_name_tag = f"<company_name>{company_name}</company_name>" if company_name else ""
     correlation_tag = f"<correlation_id>{correlation_id}</correlation_id>" if correlation_id else ""
@@ -22,7 +23,7 @@ def build_xml(
     raw = f"""
     <message>
         <header>
-            <id>{msg_id}</id>
+            <message_id>{msg_id}</message_id>
             <version>{version}</version>
             <type>{msg_type}</type>
             <timestamp>{timestamp}</timestamp>
@@ -41,7 +42,7 @@ def build_xml(
                     <id>BEV-001</id>
                     <description>Coffee</description>
                     <quantity>2</quantity>
-                    <price_unit currency="EUR">2.50</price_unit>
+                    <unit_price currency="eur">2.50</unit_price>
                     <vat_rate>{vat_rate}</vat_rate>
                 </item>
             </items>
@@ -50,12 +51,14 @@ def build_xml(
     """
     return ET.fromstring(raw)
 
-# valid message test for order
+
+# Valid message test
 def test_valid_consumption_order() -> None:
-    """A fully valid CONSUMPTION_ORDER should return no errors."""
+    """A fully valid consumption_order should return no errors."""
     root = build_xml()
     errors = validate_message(root)
     assert errors == []
+
 
 # VAT rate tests
 def test_invalid_vat_rate_returns_error() -> None:
@@ -81,6 +84,7 @@ def test_valid_vat_rate_21() -> None:
     root = build_xml(vat_rate="21")
     errors = validate_message(root)
     assert not any("vat_rate" in e for e in errors)
+
 
 # Company linked tests
 
@@ -120,41 +124,67 @@ def test_valid_company_linked() -> None:
 # Header field tests
 
 def test_missing_message_id() -> None:
+    """Empty message_id must trigger missing_required_field error."""
     root = build_xml(msg_id="")
     errors = validate_message(root)
-    assert any("<id>" in e for e in errors)
+    assert any("missing_required_field" in e and "message_id" in e for e in errors)
 
 
 def test_missing_timestamp() -> None:
+    """Empty timestamp must trigger missing_required_field error."""
     root = build_xml(timestamp="")
     errors = validate_message(root)
-    assert any("<timestamp>" in e for e in errors)
+    assert any("missing_required_field" in e and "timestamp" in e for e in errors)
+
+
+def test_invalid_timestamp_format() -> None:
+    """A timestamp not in ISO-8601 UTC format must trigger invalid_iso8601_timestamp error."""
+    root = build_xml(timestamp="24-02-2026 18:30:00")
+    errors = validate_message(root)
+    assert any("invalid_iso8601_timestamp" in e for e in errors)
+
+
+def test_valid_timestamp_format() -> None:
+    """A correct ISO-8601 UTC timestamp must not trigger a timestamp error."""
+    root = build_xml(timestamp="2026-02-24T18:30:00Z")
+    errors = validate_message(root)
+    assert not any("timestamp" in e for e in errors)
 
 
 def test_missing_source() -> None:
+    """Empty source must trigger missing_required_field error."""
     root = build_xml(source="")
     errors = validate_message(root)
-    assert any("<source>" in e for e in errors)
+    assert any("missing_required_field" in e and "source" in e for e in errors)
 
 
 def test_unknown_message_type() -> None:
+    """A completely unknown type must return unknown_message_type error."""
     root = build_xml(msg_type="UNKNOWN_TYPE")
     errors = validate_message(root)
-    assert any("unknown" in e.lower() for e in errors)
+    assert any("unknown_message_type" in e for e in errors)
 
-# PAYMENT_REGISTER specific tests
+
+def test_uppercase_message_type_returns_enum_case_error() -> None:
+    """A known type in uppercase (e.g. CONSUMPTION_ORDER) must return invalid_enum_case error."""
+    root = build_xml(msg_type="CONSUMPTION_ORDER")
+    errors = validate_message(root)
+    assert any("invalid_enum_case" in e for e in errors)
+
+
+# payment_registered specific tests
 
 def test_payment_registered_missing_correlation_id() -> None:
-    """PAYMENT_REGISTERED without correlation_id must return an error."""
-    root = build_xml(msg_type="PAYMENT_REGISTERED", correlation_id="")
+    """payment_registered without correlation_id must return an error."""
+    root = build_xml(msg_type="payment_registered", correlation_id="")
     errors = validate_message(root)
     assert any("correlation_id" in e for e in errors)
 
 
 def test_payment_registered_with_correlation_id() -> None:
-    """PAYMENT_REGISTERED with correlation_id present — no correlation error."""
+    """payment_registered with correlation_id present — no correlation error."""
     root = build_xml(
-        msg_type="PAYMENT_REGISTERED",
+        msg_type="payment_registered",
         correlation_id="f47ac10b-58cc-4372-a567-0e02b2c3d479"
     )
     errors = validate_message(root)
@@ -180,16 +210,16 @@ def test_valid_version() -> None:
 # Duplicate detection tests
 
 def test_duplicate_message_is_flagged() -> None:
-    """A message whose ID was already seen must be flagged as duplicate."""
+    """A message whose message_id was already seen must be flagged as duplicate_message_id."""
     seen_ids: set[str] = {"f47ac10b-58cc-4372-a567-0e02b2c3d479"}
     root = build_xml(msg_id="f47ac10b-58cc-4372-a567-0e02b2c3d479")
     errors = validate_message(root, seen_ids=seen_ids)
-    assert any("duplicate" in e.lower() for e in errors)
+    assert any("duplicate_message_id" in e for e in errors)
 
 
 def test_unique_message_is_not_flagged() -> None:
-    """A message with a new ID should not be flagged as duplicate."""
+    """A message with a new message_id should not be flagged as duplicate."""
     seen_ids: set[str] = {"some-other-id"}
     root = build_xml(msg_id="f47ac10b-58cc-4372-a567-0e02b2c3d479")
     errors = validate_message(root, seen_ids=seen_ids)
-    assert not any("duplicate" in e.lower() for e in errors)
+    assert not any("duplicate_message_id" in e for e in errors)

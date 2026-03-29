@@ -34,7 +34,7 @@ def build_consumption_order_xml(
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Build optional company fields: only included when "is_company_linked" is True
+    # Build optional company fields — only included when is_company_linked is True
     company_linked_str = "true" if is_company_linked else "false"
     company_fields = ""
     if is_company_linked:
@@ -43,6 +43,7 @@ def build_consumption_order_xml(
             <company_name>{company_name}</company_name>"""
 
     # Build the XML for each item in the order
+    # unit_price uses lowercase currency attribute per XML Naming Standard
     items_xml = ""
     for item in items:
         items_xml += f"""
@@ -50,18 +51,18 @@ def build_consumption_order_xml(
             <id>{item['id']}</id>
             <description>{item['description']}</description>
             <quantity>{item['quantity']}</quantity>
-            <price_unit currency="EUR">{item['price_unit']}</price_unit>
+            <unit_price currency="eur">{item['unit_price']}</unit_price>
             <vat_rate>{item['vat_rate']}</vat_rate>
         </item>"""
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
     <header>
-        <id>{message_id}</id>
+        <message_id>{message_id}</message_id>
         <version>2.0</version>
-        <type>CONSUMPTION_ORDER</type>
+        <type>consumption_order</type>
         <timestamp>{timestamp}</timestamp>
-        <source>Kassa_Bar_01</source>
+        <source>kassa_bar_01</source>
     </header>
     <body>
         <customer>
@@ -100,7 +101,7 @@ if __name__ == "__main__":
             "id": "BEV-001",
             "description": "Coffee",
             "quantity": 2,
-            "price_unit": "2.50",
+            "unit_price": "2.50",
             "vat_rate": 21
         }
     ]
