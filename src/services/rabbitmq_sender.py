@@ -1,6 +1,5 @@
 import pika
 import pika.channel
-import ssl
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -17,16 +16,11 @@ def get_connection() -> pika.BlockingConnection:
         os.getenv('RABBITMQ_USER'),
         os.getenv('RABBITMQ_PASSWORD')
     )
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    context.options |= ssl.OP_IGNORE_UNEXPECTED_EOF
     parameters = pika.ConnectionParameters(
         host=os.getenv('RABBITMQ_HOST'),
         port=int(os.getenv('RABBITMQ_PORT', 5672)),
         virtual_host=os.getenv('RABBITMQ_VHOST', '/'),
-        credentials=credentials,
-        ssl_options=pika.SSLOptions(context)
+        credentials=credentials
     )
     # Open and return a blocking connection to the RabbitMQ broker
     return pika.BlockingConnection(parameters)
