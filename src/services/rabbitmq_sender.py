@@ -1,5 +1,7 @@
 import pika
+import pika.channel
 import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 import os
@@ -10,7 +12,7 @@ load_dotenv()
 
 def get_connection() -> pika.BlockingConnection:
     # Build credentials using the RabbitMQ username and password from environment variables
-    credintials = pika.PlainCredentials(
+    credentials = pika.PlainCredentials(
         os.getenv('RABBITMQ_USER'),
         os.getenv('RABBITMQ_PASSWORD')
     )
@@ -18,7 +20,7 @@ def get_connection() -> pika.BlockingConnection:
     parameters = pika.ConnectionParameters(
         host=os.getenv('RABBITMQ_HOST'),
         port=int(os.getenv('RABBITMQ_PORT', 5672)),  # pika expects an integer port
-        credentials=credintials
+        credentials=credentials
     )
     # Open and return a blocking connection to the RabbitMQ broker
     return pika.BlockingConnection(parameters)
@@ -31,57 +33,67 @@ def build_consumption_order_xml(
     company_id: str = "",
     company_name: str = "",
 ) -> str:
+    """
+    Builds a consumption_order XML message using ElementTree so all input values
+    are automatically escaped, preventing XML injection.
+    """
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Build optional company fields — only included when is_company_linked is True
-    company_linked_str = "true" if is_company_linked else "false"
-    company_fields = ""
+    root = ET.Element("message")
+
+    # Build header
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "version").text = "2.0"
+    ET.SubElement(header, "type").text = "consumption_order"
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = "kassa_bar_01"
+
+    # Build body — customer
+    body = ET.SubElement(root, "body")
+    customer = ET.SubElement(body, "customer")
+    ET.SubElement(customer, "id").text = customer_id
+    ET.SubElement(customer, "is_company_linked").text = "true" if is_company_linked else "false"
+    # company_id and company_name are only included when is_company_linked is True
     if is_company_linked:
-        company_fields = f"""
-            <company_id>{company_id}</company_id>
-            <company_name>{company_name}</company_name>"""
+        ET.SubElement(customer, "company_id").text = company_id
+        ET.SubElement(customer, "company_name").text = company_name
 
-    # Build the XML for each item in the order
-    # unit_price uses lowercase currency attribute per XML Naming Standard
-    items_xml = ""
+    # Build body — items
+    items_el = ET.SubElement(body, "items")
     for item in items:
-        items_xml += f"""
-        <item>
-            <id>{item['id']}</id>
-            <description>{item['description']}</description>
-            <quantity>{item['quantity']}</quantity>
-            <unit_price currency="eur">{item['unit_price']}</unit_price>
-            <vat_rate>{item['vat_rate']}</vat_rate>
-        </item>"""
+        item_el = ET.SubElement(items_el, "item")
+        ET.SubElement(item_el, "id").text = str(item["id"])
+        ET.SubElement(item_el, "description").text = str(item["description"])
+        ET.SubElement(item_el, "quantity").text = str(item["quantity"])
+        unit_price_el = ET.SubElement(item_el, "unit_price")
+        unit_price_el.text = str(item["unit_price"])
+        unit_price_el.set("currency", "eur")  # lowercase per XML Naming Standard
+        ET.SubElement(item_el, "vat_rate").text = str(item["vat_rate"])
 
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<message>
-    <header>
-        <message_id>{message_id}</message_id>
-        <version>2.0</version>
-        <type>consumption_order</type>
-        <timestamp>{timestamp}</timestamp>
-        <source>kassa_bar_01</source>
-    </header>
-    <body>
-        <customer>
-            <id>{customer_id}</id>
-            <is_company_linked>{company_linked_str}</is_company_linked>{company_fields}
-        </customer>
-        <items>{items_xml}
-        </items>
-    </body>
-</message>"""
+    ET.indent(root, space="    ")
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
 
 
-def send_message(xml_message: str, routing_key: str = "facturatie") -> None:
-    # Open a connection and declare the queue as durable (survives RabbitMQ restarts)
-    connection = get_connection()
-    channel = connection.channel()
+def send_message(
+    xml_message: str,
+    routing_key: str = "facturatie",
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """
+    Publishes an XML message to a RabbitMQ queue.
+    Pass an existing channel to reuse a connection across multiple messages.
+    If no channel is provided, a temporary connection is opened and closed automatically.
+    """
+    connection = None
+    if channel is None:
+        # No channel provided — open a single-use connection
+        connection = get_connection()
+        channel = connection.channel()
 
     channel.queue_declare(queue=routing_key, durable=True)
-    # Publish the message with delivery_mode=2 so it is persisted to disk
+    # delivery_mode=2 ensures the message is persisted to disk
     channel.basic_publish(
         exchange="",
         routing_key=routing_key,
@@ -92,7 +104,10 @@ def send_message(xml_message: str, routing_key: str = "facturatie") -> None:
         )
     )
     print(f"[SENDER] Message sent to queue '{routing_key}'")
-    connection.close()
+
+    # Only close if we opened the connection here
+    if connection is not None:
+        connection.close()
 
 
 if __name__ == "__main__":

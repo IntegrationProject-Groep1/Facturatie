@@ -34,11 +34,16 @@ def get_connection() -> pika.BlockingConnection:
     return pika.BlockingConnection(parameters)
 
 
-def validate_message(root: ET.Element, seen_ids: set[str] | None = None) -> list[str]:
+def is_duplicate(msg_id: str, seen_ids: set[str]) -> bool:
+    """Returns True if the message_id has already been processed."""
+    return msg_id in seen_ids
+
+
+def validate_message(root: ET.Element) -> list[str]:
     """
     Validates the XML message against the XML Naming Standard.
     Returns a list of error strings. An empty list means the message is valid.
-    Pass seen_ids to enable duplicate detection based on header/message_id.
+    Duplicate detection is handled separately by is_duplicate().
     """
     errors: list[str] = []
 
@@ -47,11 +52,6 @@ def validate_message(root: ET.Element, seen_ids: set[str] | None = None) -> list
     timestamp = root.findtext("header/timestamp")
     source    = root.findtext("header/source")
     version   = root.findtext("header/version")
-
-    # Duplicate detection: flag if this message_id was already seen
-    if seen_ids is not None and msg_id and msg_id in seen_ids:
-        errors.append(f"WARN: duplicate_message_id: '{msg_id}'")
-        return errors
 
     # Header field validation
     if not msg_id:
@@ -132,17 +132,18 @@ def process_message(
 ) -> None:
     print("\n[RECEIVER] Message received")
 
-    # Step 1: parse XML
+    # Step 1: parse XML — catch both invalid XML and bad encodings
     try:
         root = ET.fromstring(body.decode("utf-8"))
-    except ET.ParseError as e:
-        print(f"[RECEIVER] ERROR: Invalid XML — {e}")
+    except (ET.ParseError, UnicodeDecodeError) as e:
+        print(f"[RECEIVER] ERROR: Invalid XML or encoding — {e}")
+        send_to_dlq(channel, body, [f"ERROR: invalid_xml: {e}"])
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
     # Step 2: duplicate detection based on header/message_id
     msg_id = root.findtext("header/message_id")
-    if msg_id in seen_message_ids:
+    if msg_id and is_duplicate(msg_id, seen_message_ids):
         print(f"[RECEIVER] WARN: duplicate_message_id: '{msg_id}' — ignored")
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
@@ -176,7 +177,13 @@ def start_receiver(queue: str = "facturatie") -> None:
     channel.basic_consume(queue=queue, on_message_callback=process_message)
 
     print(f"[RECEIVER] Listening on queue '{queue}'... (CTRL+C to stop)")
-    channel.start_consuming()
+    # Graceful shutdown: always close the connection on exit
+    try:
+        channel.start_consuming()
+    except KeyboardInterrupt:
+        print("\n[RECEIVER] Stopping consumer...")
+    finally:
+        connection.close()
 
 
 if __name__ == "__main__":

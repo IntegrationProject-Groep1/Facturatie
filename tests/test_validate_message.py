@@ -1,6 +1,6 @@
 import pytest
 import xml.etree.ElementTree as ET
-from src.services.rabbitmq_receiver import validate_message
+from src.services.rabbitmq_receiver import validate_message, is_duplicate
 
 
 def build_xml(
@@ -68,20 +68,10 @@ def test_invalid_vat_rate_returns_error() -> None:
     assert any("vat_rate" in e for e in errors)
 
 
-def test_valid_vat_rate_6() -> None:
-    root = build_xml(vat_rate="6")
-    errors = validate_message(root)
-    assert not any("vat_rate" in e for e in errors)
-
-
-def test_valid_vat_rate_12() -> None:
-    root = build_xml(vat_rate="12")
-    errors = validate_message(root)
-    assert not any("vat_rate" in e for e in errors)
-
-
-def test_valid_vat_rate_21() -> None:
-    root = build_xml(vat_rate="21")
+@pytest.mark.parametrize("vat_rate", ["6", "12", "21"])
+def test_valid_vat_rates(vat_rate: str) -> None:
+    """All three allowed VAT rates must pass without a vat_rate error."""
+    root = build_xml(vat_rate=vat_rate)
     errors = validate_message(root)
     assert not any("vat_rate" in e for e in errors)
 
@@ -207,19 +197,15 @@ def test_valid_version() -> None:
     assert not any("version" in e.lower() for e in errors)
 
 
-# Duplicate detection tests
+# Duplicate detection tests — use is_duplicate() directly
 
 def test_duplicate_message_is_flagged() -> None:
-    """A message whose message_id was already seen must be flagged as duplicate_message_id."""
+    """A message_id already in seen_ids must be detected as duplicate."""
     seen_ids: set[str] = {"f47ac10b-58cc-4372-a567-0e02b2c3d479"}
-    root = build_xml(msg_id="f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    errors = validate_message(root, seen_ids=seen_ids)
-    assert any("duplicate_message_id" in e for e in errors)
+    assert is_duplicate("f47ac10b-58cc-4372-a567-0e02b2c3d479", seen_ids) is True
 
 
 def test_unique_message_is_not_flagged() -> None:
-    """A message with a new message_id should not be flagged as duplicate."""
+    """A message_id not in seen_ids must not be detected as duplicate."""
     seen_ids: set[str] = {"some-other-id"}
-    root = build_xml(msg_id="f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    errors = validate_message(root, seen_ids=seen_ids)
-    assert not any("duplicate_message_id" in e for e in errors)
+    assert is_duplicate("f47ac10b-58cc-4372-a567-0e02b2c3d479", seen_ids) is False
