@@ -16,40 +16,37 @@ def build_xml(
     correlation_id: str = ""
 ) -> ET.Element:
     """Helper that builds a minimal valid XML element for testing (XML Naming Standard)."""
-    company_id_tag = f"<company_id>{company_id}</company_id>" if company_id else ""
-    company_name_tag = f"<company_name>{company_name}</company_name>" if company_name else ""
-    correlation_tag = f"<correlation_id>{correlation_id}</correlation_id>" if correlation_id else ""
+    root = ET.Element("message")
 
-    raw = f"""
-    <message>
-        <header>
-            <message_id>{msg_id}</message_id>
-            <version>{version}</version>
-            <type>{msg_type}</type>
-            <timestamp>{timestamp}</timestamp>
-            <source>{source}</source>
-            {correlation_tag}
-        </header>
-        <body>
-            <customer>
-                <id>12345</id>
-                <is_company_linked>{is_company_linked}</is_company_linked>
-                {company_id_tag}
-                {company_name_tag}
-            </customer>
-            <items>
-                <item>
-                    <id>BEV-001</id>
-                    <description>Coffee</description>
-                    <quantity>2</quantity>
-                    <unit_price currency="eur">2.50</unit_price>
-                    <vat_rate>{vat_rate}</vat_rate>
-                </item>
-            </items>
-        </body>
-    </message>
-    """
-    return ET.fromstring(raw)
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = msg_id
+    ET.SubElement(header, "version").text = version
+    ET.SubElement(header, "type").text = msg_type
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    if correlation_id:
+        ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    customer = ET.SubElement(body, "customer")
+    ET.SubElement(customer, "id").text = "12345"
+    ET.SubElement(customer, "is_company_linked").text = is_company_linked
+    if company_id:
+        ET.SubElement(customer, "company_id").text = company_id
+    if company_name:
+        ET.SubElement(customer, "company_name").text = company_name
+
+    items_el = ET.SubElement(body, "items")
+    item_el = ET.SubElement(items_el, "item")
+    ET.SubElement(item_el, "id").text = "BEV-001"
+    ET.SubElement(item_el, "description").text = "Coffee"
+    ET.SubElement(item_el, "quantity").text = "2"
+    unit_price = ET.SubElement(item_el, "unit_price")
+    unit_price.text = "2.50"
+    unit_price.set("currency", "eur")
+    ET.SubElement(item_el, "vat_rate").text = vat_rate
+
+    return root
 
 
 # Valid message test
