@@ -48,11 +48,11 @@ def validate_message(root: ET.Element) -> list[str]:
     """
     errors: list[str] = []
 
-    msg_id    = root.findtext("header/message_id")
-    msg_type  = root.findtext("header/type")
+    msg_id = root.findtext("header/message_id")
+    msg_type = root.findtext("header/type")
     timestamp = root.findtext("header/timestamp")
-    source    = root.findtext("header/source")
-    version   = root.findtext("header/version")
+    source = root.findtext("header/source")
+    version = root.findtext("header/version")
 
     # Header field validation
     if not msg_id:
@@ -78,8 +78,8 @@ def validate_message(root: ET.Element) -> list[str]:
 
     # Conditional validation: consumption_order
     if msg_type == "consumption_order":
-        is_company   = root.findtext("body/customer/is_company_linked")
-        company_id   = root.findtext("body/customer/company_id")
+        is_company = root.findtext("body/customer/is_company_linked")
+        company_id = root.findtext("body/customer/company_id")
         company_name = root.findtext("body/customer/company_name")
 
         if is_company == "true":
