@@ -29,7 +29,7 @@ Create a `.env` file in the project root:
 
 ```
 RABBITMQ_HOST=localhost
-RABBITMQ_PORT=5672
+RABBITMQ_PORT=30000
 RABBITMQ_USER=guest
 RABBITMQ_PASSWORD=guest
 ```
@@ -37,17 +37,17 @@ RABBITMQ_PASSWORD=guest
 ## Running
 
 ```bash
-# Send a test message
-python src/services/rabbitmq_sender.py
+# Send a test message in src/services
+python rabbitmq_sender.py
 
-# Start the receiver
-python src/services/rabbitmq_receiver.py
+# Start the receiver in src/services
+python rabbitmq_receiver.py
 ```
 
 ## Tests
 
 ```bash
-pytest tests/ -v
+python -m pytest tests/ -v
 ```
 
 ## Message types
