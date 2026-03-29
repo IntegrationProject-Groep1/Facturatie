@@ -16,10 +16,11 @@ def get_connection() -> pika.BlockingConnection:
         os.getenv('RABBITMQ_USER'),
         os.getenv('RABBITMQ_PASSWORD')
     )
-    # Set up connection parameters with host, port, and credentials
+    # Set up connection parameters with host, port, virtual host, and credentials
     parameters = pika.ConnectionParameters(
         host=os.getenv('RABBITMQ_HOST'),
         port=int(os.getenv('RABBITMQ_PORT', 5672)),  # pika expects an integer port
+        virtual_host=os.getenv('RABBITMQ_VHOST', '/'),
         credentials=credentials
     )
     # Open and return a blocking connection to the RabbitMQ broker
@@ -78,14 +79,19 @@ def build_consumption_order_xml(
 
 def send_message(
     xml_message: str,
-    routing_key: str = "facturatie",
+    routing_key: str | None = None,
     channel: pika.channel.Channel | None = None,
 ) -> None:
     """
     Publishes an XML message to a RabbitMQ queue.
     Pass an existing channel to reuse a connection across multiple messages.
     If no channel is provided, a temporary connection is opened and closed automatically.
+    routing_key defaults to QUEUE_INCOMING (facturatie.incoming).
+    Use 'heartbeat' for the central monitoring queue (no team prefix).
+    Use 'facturatie.to.<team>' for outgoing messages to other teams.
     """
+    if routing_key is None:
+        routing_key = os.getenv("QUEUE_INCOMING", "facturatie.incoming")
     connection = None
     if channel is None:
         # No channel provided — open a single-use connection

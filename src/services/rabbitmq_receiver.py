@@ -29,6 +29,7 @@ def get_connection() -> pika.BlockingConnection:
     parameters = pika.ConnectionParameters(
         host=os.getenv("RABBITMQ_HOST"),
         port=int(os.getenv("RABBITMQ_PORT", 5672)),
+        virtual_host=os.getenv("RABBITMQ_VHOST", "/"),
         credentials=credentials
     )
     return pika.BlockingConnection(parameters)
@@ -110,10 +111,11 @@ def send_to_dlq(
     errors: list[str]
 ) -> None:
     """Forwards an invalid message to the Dead Letter Queue."""
-    channel.queue_declare(queue="facturatie.dlq", durable=True)
+    dlq = os.getenv("QUEUE_DLQ", "facturatie.dlq")
+    channel.queue_declare(queue=dlq, durable=True)
     channel.basic_publish(
         exchange="",
-        routing_key="facturatie.dlq",
+        routing_key=dlq,
         body=body,
         properties=pika.BasicProperties(
             delivery_mode=2,
@@ -168,7 +170,9 @@ def process_message(
     channel.basic_ack(delivery_tag=method.delivery_tag)
 
 
-def start_receiver(queue: str = "facturatie") -> None:
+def start_receiver(queue: str | None = None) -> None:
+    if queue is None:
+        queue = os.getenv("QUEUE_INCOMING", "facturatie.incoming")
     connection = get_connection()
     channel = connection.channel()
 
