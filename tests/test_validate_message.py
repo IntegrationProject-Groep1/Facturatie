@@ -1,6 +1,6 @@
 import pytest
 import xml.etree.ElementTree as ET
-from services.rabbitmq_receiver import validate_message
+from src.services.rabbitmq_receiver import validate_message
 
 def build_xml(
     msg_type: str = "CONSUMPTION_ORDER",
@@ -159,3 +159,37 @@ def test_payment_registered_with_correlation_id() -> None:
     )
     errors = validate_message(root)
     assert not any("correlation_id" in e for e in errors)
+
+
+# Version validation tests
+
+def test_invalid_version_returns_error() -> None:
+    """A version other than 2.0 must return an error."""
+    root = build_xml(version="1.0")
+    errors = validate_message(root)
+    assert any("version" in e.lower() for e in errors)
+
+
+def test_valid_version() -> None:
+    """Version 2.0 should not return a version error."""
+    root = build_xml(version="2.0")
+    errors = validate_message(root)
+    assert not any("version" in e.lower() for e in errors)
+
+
+# Duplicate detection tests
+
+def test_duplicate_message_is_flagged() -> None:
+    """A message whose ID was already seen must be flagged as duplicate."""
+    seen_ids: set[str] = {"f47ac10b-58cc-4372-a567-0e02b2c3d479"}
+    root = build_xml(msg_id="f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    errors = validate_message(root, seen_ids=seen_ids)
+    assert any("duplicate" in e.lower() for e in errors)
+
+
+def test_unique_message_is_not_flagged() -> None:
+    """A message with a new ID should not be flagged as duplicate."""
+    seen_ids: set[str] = {"some-other-id"}
+    root = build_xml(msg_id="f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    errors = validate_message(root, seen_ids=seen_ids)
+    assert not any("duplicate" in e.lower() for e in errors)
