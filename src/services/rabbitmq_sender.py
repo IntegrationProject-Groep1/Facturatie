@@ -32,6 +32,7 @@ def build_consumption_order_xml(
     is_company_linked: bool = False,
     company_id: str = "",
     company_name: str = "",
+    source: str = "kassa_bar_01",
 ) -> str:
     """
     Builds a consumption_order XML message using ElementTree so all input values
@@ -48,7 +49,7 @@ def build_consumption_order_xml(
     ET.SubElement(header, "version").text = "2.0"
     ET.SubElement(header, "type").text = "consumption_order"
     ET.SubElement(header, "timestamp").text = timestamp
-    ET.SubElement(header, "source").text = "kassa_bar_01"
+    ET.SubElement(header, "source").text = source
 
     # Build body — customer
     body = ET.SubElement(root, "body")
