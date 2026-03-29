@@ -1,5 +1,6 @@
 import pika
 import pika.channel
+import ssl
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -16,12 +17,16 @@ def get_connection() -> pika.BlockingConnection:
         os.getenv('RABBITMQ_USER'),
         os.getenv('RABBITMQ_PASSWORD')
     )
-    # Set up connection parameters with host, port, virtual host, and credentials
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.options |= ssl.OP_IGNORE_UNEXPECTED_EOF
     parameters = pika.ConnectionParameters(
         host=os.getenv('RABBITMQ_HOST'),
-        port=int(os.getenv('RABBITMQ_PORT', 5672)),  # pika expects an integer port
+        port=int(os.getenv('RABBITMQ_PORT', 5672)),
         virtual_host=os.getenv('RABBITMQ_VHOST', '/'),
-        credentials=credentials
+        credentials=credentials,
+        ssl_options=pika.SSLOptions(context)
     )
     # Open and return a blocking connection to the RabbitMQ broker
     return pika.BlockingConnection(parameters)
@@ -114,6 +119,23 @@ def send_message(
     # Only close if we opened the connection here
     if connection is not None:
         connection.close()
+
+
+def send_error_to_monitor(error_message: str) -> None:
+    """
+    Sends an error notification to the central error queue (errors.facturatie).
+    Call this when a critical failure occurs (e.g. database offline, API failure).
+    Conform sectie 7 van de Sidecar Architectuur.
+    """
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("error")
+    ET.SubElement(root, "system").text = "facturatie"
+    ET.SubElement(root, "timestamp").text = timestamp
+    ET.SubElement(root, "message").text = error_message
+
+    xml_error = f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+    send_message(xml_error, routing_key="errors.facturatie")
 
 
 if __name__ == "__main__":
