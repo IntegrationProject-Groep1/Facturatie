@@ -12,7 +12,7 @@ ISO8601_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 load_dotenv()
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
-VALID_TYPES: set[str] = {"consumption_order", "payment_registered", "heartbeat"}
+VALID_TYPES: set[str] = {"consumption_order", "payment_registered", "heartbeat", "new_registration", "invoice_cancelled"}
 VALID_VAT_RATES: set[str] = {"6", "12", "21"}
 VALID_PAYMENT_METHODS: set[str] = {"company_link", "on_site", "online"}
 
@@ -101,6 +101,34 @@ def validate_message(root: ET.Element) -> list[str]:
         correlation_id = root.findtext("header/correlation_id")
         if not correlation_id:
             errors.append("ERROR: correlation_id required for payment_registered")
+
+    # Conditional validation: new_registration
+    if msg_type == "new_registration":
+        customer_id = root.findtext("body/customer/id")
+        email = root.findtext("body/customer/email")
+        is_company = root.findtext("body/customer/is_company_linked")
+        if not customer_id:
+            errors.append("ERROR: customer_id required for new_registration")
+        if not email:
+            errors.append("ERROR: email required for new_registration")
+        if not is_company:
+            errors.append("ERROR: is_company_linked required for new_registration")
+        if is_company == "true":
+            company_id = root.findtext("body/customer/company_id")
+            company_name = root.findtext("body/customer/company_name")
+            if not company_id:
+                errors.append("ERROR: company_id required when is_company_linked=true")
+            if not company_name:
+                errors.append("ERROR: company_name required when is_company_linked=true")
+
+    # Conditional validation: invoice_cancelled
+    if msg_type == "invoice_cancelled":
+        invoice_id = root.findtext("body/invoice_id")
+        customer_id = root.findtext("body/customer_id")
+        if not invoice_id:
+            errors.append("ERROR: invoice_id required for invoice_cancelled")
+        if not customer_id:
+            errors.append("ERROR: customer_id required for invoice_cancelled")
 
     return errors
 

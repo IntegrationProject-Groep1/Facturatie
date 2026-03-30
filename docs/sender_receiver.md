@@ -54,9 +54,11 @@ python -m pytest tests/ -v
 
 | Type | Description |
 |---|---|
-| `CONSUMPTION_ORDER` | Order placed at a bar/kassa |
-| `PAYMENT_REGISTERED` | Payment confirmation (requires `correlation_id`) |
-| `HEARTBEAT` | Health check message |
+| `consumption_order` | Order placed at a bar/kassa |
+| `payment_registered` | Payment confirmation (requires `correlation_id`) |
+| `heartbeat` | Health check message |
+| `new_registration` | New registration from the website (requires `customer_id`, `email`, `is_company_linked`) |
+| `invoice_cancelled` | Cancellation of a registration (requires `invoice_id`, `customer_id`) |
 
 Invalid messages (bad VAT rate, missing fields, wrong version) are forwarded to `facturatie.dlq`.
 
