@@ -12,7 +12,13 @@ ISO8601_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 load_dotenv()
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
-VALID_TYPES: set[str] = {"consumption_order", "payment_registered", "heartbeat", "new_registration", "invoice_cancelled"}
+VALID_TYPES: set[str] = {
+    "consumption_order",
+    "payment_registered",
+    "heartbeat",
+    "new_registration",
+    "invoice_cancelled"
+}
 VALID_VAT_RATES: set[str] = {"6", "12", "21"}
 VALID_PAYMENT_METHODS: set[str] = {"company_link", "on_site", "online"}
 
