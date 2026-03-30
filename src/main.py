@@ -2,6 +2,7 @@ import sys
 import threading
 from services.rabbitmq_receiver import start_receiver
 
+
 def main():
     print("Facturatie Integration Service is gestart.", flush=True)
 
