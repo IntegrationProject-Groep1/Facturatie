@@ -12,7 +12,7 @@ ISO8601_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 load_dotenv()
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
-VALID_TYPES: set[str] = {"consumption_order", "payment_registered", "heartbeat"}
+VALID_TYPES: set[str] = {"consumption_order", "payment_registered", "heartbeat", "new_registration"}
 VALID_VAT_RATES: set[str] = {"6", "12", "21"}
 VALID_PAYMENT_METHODS: set[str] = {"company_link", "on_site", "online"}
 
@@ -95,6 +95,28 @@ def validate_message(root: ET.Element) -> list[str]:
                 errors.append(
                     f"ERROR: vat_rate must be 6, 12 or 21 for item '{item_id}' (got '{vat}')"
                 )
+
+    # Conditional validation: new_registration
+    if msg_type == "new_registration":
+        email = root.findtext("body/customer/email")
+        is_company = root.findtext("body/customer/is_company_linked")
+        company_id = root.findtext("body/customer/company_id")
+        company_name = root.findtext("body/customer/company_name")
+
+        if not email:
+            errors.append("ERROR: missing_required_field: email")
+        if not is_company:
+            errors.append("ERROR: missing_required_field: is_company_linked")
+
+        if is_company == "true":
+            if not company_id:
+                errors.append("ERROR: company_id required when is_company_linked=true")
+            if not company_name:
+                errors.append("ERROR: company_name required when is_company_linked=true")
+
+        for field in ["street", "number", "postal_code", "city", "country"]:
+            if not root.findtext(f"body/customer/address/{field}"):
+                errors.append(f"ERROR: missing_required_field: address.{field}")
 
     # Conditional validation: payment_registered
     if msg_type == "payment_registered":
