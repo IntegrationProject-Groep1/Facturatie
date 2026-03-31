@@ -14,13 +14,13 @@ token = os.getenv("BILLING_API_TOKEN")
 
 methods = [
     ("Basic Auth (email + token)",
-     lambda: requests.post(url, auth=(username, token), data={}, timeout=10)),
+     lambda: requests.post(url, auth=(username, token), data={}, timeout=10, verify=False)),
     ("Bearer token",
-     lambda: requests.post(url, headers={"Authorization": f"Bearer {token}"}, data={}, timeout=10)),
+     lambda: requests.post(url, headers={"Authorization": f"Bearer {token}"}, data={}, timeout=10, verify=False)),
     ("access_token in body",
-     lambda: requests.post(url, data={"access_token": token}, timeout=10)),
+     lambda: requests.post(url, data={"access_token": token}, timeout=10, verify=False)),
     ("access_token in URL",
-     lambda: requests.post(f"{url}?access_token={token}", data={}, timeout=10)),
+     lambda: requests.post(f"{url}?access_token={token}", data={}, timeout=10, verify=False)),
 ]
 
 working_method = None
@@ -45,7 +45,8 @@ if working_method:
             "last_name": "User",
             "currency": "EUR",
         },
-        timeout=10
+        timeout=10,
+        verify=False
     )
     print(f"[TEST] Status: {r2.status_code}")
     print(f"[TEST] Response: {r2.text[:300]}")
