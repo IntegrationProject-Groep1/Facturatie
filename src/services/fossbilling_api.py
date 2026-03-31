@@ -61,15 +61,14 @@ def _create_invoice(client_id: int, fee: str, currency: str) -> str:
 def create_registration_invoice(customer_data: dict) -> str:
     """
     Creates a FossBilling client and registration invoice.
-    Retries up to MAX_RETRIES times on failure.
+    Both client and invoice creation are retried up to MAX_RETRIES times on failure.
     Returns the invoice_id on success.
     Raises Exception if all retries are exhausted.
     """
-    client_id = _create_client(customer_data)
-
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
+            client_id = _create_client(customer_data)
             invoice_id = _create_invoice(
                 client_id,
                 customer_data["registration_fee"],
