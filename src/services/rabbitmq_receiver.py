@@ -140,6 +140,9 @@ def validate_message(root: ET.Element) -> list[str]:
             if not company_name:
                 errors.append("ERROR: company_name required when is_company_linked=true")
 
+        if not root.findtext("body/registration_fee"):
+            errors.append("ERROR: missing_required_field: registration_fee")
+
     # Conditional validation: invoice_cancelled
     if msg_type == "invoice_cancelled":
         invoice_id = root.findtext("body/invoice_id")
