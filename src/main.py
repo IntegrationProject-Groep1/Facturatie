@@ -1,16 +1,22 @@
-import time
 import sys
+import threading
+from services.rabbitmq_receiver import start_receiver
 
 
 def main():
     print("Facturatie Integration Service is gestart.", flush=True)
-    print("Container draait en wacht op berichten...", flush=True)
+
+    receiver_thread = threading.Thread(
+        target=start_receiver,
+        daemon=True
+    )
+    receiver_thread.start()
+    print("Receiver gestart; luistert naar berichten...", flush=True)
 
     try:
-        while True:
-            time.sleep(60)
+        receiver_thread.join()
     except KeyboardInterrupt:
-        print("Service wordt afgesloten...")
+        print("\nService wordt afgesloten...")
         sys.exit(0)
 
 
