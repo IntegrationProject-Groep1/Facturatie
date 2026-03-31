@@ -45,6 +45,24 @@ def _create_client(customer_data: dict) -> int:
     return int(result["result"])
 
 
+def _get_client_by_email(email: str) -> int | None:
+    """Looks up a client by email in FossBilling. Returns client_id or None if not found."""
+    result = _api_post("admin/client/get_list", {"search": email, "per_page": 1})
+    clients = result.get("result", {}).get("list", [])
+    if clients:
+        return int(clients[0]["id"])
+    return None
+
+
+def _get_or_create_client(customer_data: dict) -> int:
+    """Returns existing client_id if email is already registered, otherwise creates a new client."""
+    existing_id = _get_client_by_email(customer_data["email"])
+    if existing_id is not None:
+        print(f"[FOSSBILLING] Client already exists | client_id={existing_id}")
+        return existing_id
+    return _create_client(customer_data)
+
+
 def _create_invoice(client_id: int, fee: str, currency: str) -> str:
     """Creates a registration invoice for a client in FossBilling. Returns the invoice_id."""
     payload = {
@@ -68,7 +86,7 @@ def create_registration_invoice(customer_data: dict) -> str:
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            client_id = _create_client(customer_data)
+            client_id = _get_or_create_client(customer_data)
             invoice_id = _create_invoice(
                 client_id,
                 customer_data["registration_fee"],
