@@ -12,6 +12,10 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    env:
+      BILLING_API_URL: ${{ secrets.BILLING_API_URL }}
+      BILLING_API_USERNAME: ${{ secrets.BILLING_API_USERNAME }}
+      BILLING_API_TOKEN: ${{ secrets.BILLING_API_TOKEN }}
 
     steps:
       - name: Checkout code
