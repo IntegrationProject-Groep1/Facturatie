@@ -126,11 +126,8 @@ def validate_message(root: ET.Element) -> list[str]:
 
     # Conditional validation: new_registration
     if msg_type == "new_registration":
-        customer_id = root.findtext("body/customer/id")
         email = root.findtext("body/customer/email")
         is_company = root.findtext("body/customer/is_company_linked")
-        if not customer_id:
-            errors.append("ERROR: customer_id required for new_registration")
         if not email:
             errors.append("ERROR: email required for new_registration")
         if not is_company:
