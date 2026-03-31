@@ -6,7 +6,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 from src.services.fossbilling_api import create_registration_invoice
-from src.services.rabbitmq_sender import build_invoice_request_xml
+from src.services.rabbitmq_sender import build_invoice_request_xml, send_message
 
 # ISO-8601 UTC pattern: 2026-02-24T18:30:00Z
 ISO8601_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -251,8 +251,8 @@ def process_message(
             correlation_id=msg_id,
             company_name=customer_data["company_name"],
         )
-        # TODO: send invoice_request_xml to mailing queue once queue name is confirmed
-        print(f"[RECEIVER] invoice_request ready | invoice_id={invoice_id} | correlation_id={msg_id}")
+        send_message(invoice_request_xml, routing_key="facturatie.to.mailing", channel=channel)
+        print(f"[RECEIVER] invoice_request sent | invoice_id={invoice_id} | correlation_id={msg_id}")
 
     channel.basic_ack(delivery_tag=method.delivery_tag)
 

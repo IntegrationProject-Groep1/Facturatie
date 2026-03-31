@@ -91,6 +91,15 @@ def test_process_new_registration_acks_on_success() -> None:
     channel.basic_nack.assert_not_called()
 
 
+def test_process_new_registration_sends_invoice_request() -> None:
+    """process_message must send invoice_request to facturatie.to.mailing on success."""
+    channel = make_channel()
+    with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"):
+        process_message(channel, make_method(), MagicMock(), VALID_XML)
+    call_args = channel.basic_publish.call_args
+    assert call_args.kwargs["routing_key"] == "facturatie.to.mailing"
+
+
 def test_process_new_registration_nacks_to_dlq_on_fossbilling_failure() -> None:
     """process_message must nack and send to DLQ when FossBilling raises an exception."""
     channel = make_channel()
