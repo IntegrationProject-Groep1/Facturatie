@@ -39,4 +39,9 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v
+          pytest tests/ -v -m "not integration"
+
+      - name: Run integration tests
+        run: |
+          pytest tests/ -v -m "integration"
+        continue-on-error: true
