@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 import os
 import re
 import xml.etree.ElementTree as ET
-from src.services.fossbilling_api import create_registration_invoice
-from src.services.rabbitmq_sender import build_invoice_request_xml, send_message
+from .fossbilling_api import create_registration_invoice
+from .rabbitmq_sender import build_invoice_request_xml, send_message
 
 # ISO-8601 UTC pattern: 2026-02-24T18:30:00Z
 ISO8601_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")

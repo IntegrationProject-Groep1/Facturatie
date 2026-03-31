@@ -1,5 +1,6 @@
 import os
 import time
+import uuid
 import requests
 from dotenv import load_dotenv
 
@@ -12,8 +13,8 @@ RETRY_DELAY_SECONDS = 2
 def _api_post(endpoint: str, data: dict) -> dict:
     """Makes an authenticated POST request to the FossBilling admin API."""
     url = f"{os.getenv('BILLING_API_URL', 'http://localhost/api')}/{endpoint}"
-    data["access_token"] = os.getenv("BILLING_API_TOKEN", "")
-    response = requests.post(url, data=data, timeout=10)
+    auth = (os.getenv("BILLING_API_USERNAME", "admin"), os.getenv("BILLING_API_TOKEN", ""))
+    response = requests.post(url, data=data, auth=auth, timeout=10)
     response.raise_for_status()
     result = response.json()
     if not result.get("result"):
@@ -29,10 +30,13 @@ def _create_client(customer_data: dict) -> int:
         "email": customer_data["email"],
         "first_name": customer_data.get("company_name") or "Onbekend",
         "last_name": "-",
+        "password": f"Reg-{uuid.uuid4()}",
+        "password_confirm": "",
         "address_1": f"{address.get('street', '')} {address.get('number', '')}".strip(),
         "city": address.get("city", ""),
         "postcode": address.get("postal_code", ""),
         "country": address.get("country", "").upper(),
+        "currency": customer_data.get("fee_currency", "eur").upper(),
     }
     if customer_data.get("company_name"):
         payload["company"] = customer_data["company_name"]
@@ -50,7 +54,7 @@ def _create_invoice(client_id: int, fee: str, currency: str) -> str:
         "items[0][quantity]": 1,
         "items[0][unit]": currency.upper(),
     }
-    result = _api_post("admin/invoice/create", payload)
+    result = _api_post("admin/invoice/prepare", payload)
     return str(result["result"])
 
 
@@ -61,10 +65,11 @@ def create_registration_invoice(customer_data: dict) -> str:
     Returns the invoice_id on success.
     Raises Exception if all retries are exhausted.
     """
+    client_id = _create_client(customer_data)
+
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            client_id = _create_client(customer_data)
             invoice_id = _create_invoice(
                 client_id,
                 customer_data["registration_fee"],
