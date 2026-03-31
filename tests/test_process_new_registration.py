@@ -1,0 +1,115 @@
+import pytest
+import xml.etree.ElementTree as ET
+from unittest.mock import MagicMock, patch
+from src.services.rabbitmq_receiver import process_message, extract_customer_data
+import src.services.rabbitmq_receiver as receiver
+
+
+@pytest.fixture(autouse=True)
+def clear_seen_ids():
+    """Reset seen_message_ids before each test to avoid duplicate detection."""
+    receiver.seen_message_ids.clear()
+    yield
+    receiver.seen_message_ids.clear()
+
+
+def make_channel() -> MagicMock:
+    channel = MagicMock()
+    channel.queue_declare = MagicMock()
+    channel.basic_publish = MagicMock()
+    channel.basic_ack = MagicMock()
+    channel.basic_nack = MagicMock()
+    return channel
+
+
+def make_method(delivery_tag: int = 1) -> MagicMock:
+    method = MagicMock()
+    method.delivery_tag = delivery_tag
+    return method
+
+
+VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
+<message>
+  <header>
+    <message_id>a1b2c3d4-0000-4000-8000-000000000099</message_id>
+    <version>2.0</version>
+    <type>new_registration</type>
+    <timestamp>2026-03-31T10:00:00Z</timestamp>
+    <source>frontend</source>
+  </header>
+  <body>
+    <customer>
+      <email>info@bedrijf.be</email>
+      <is_company_linked>false</is_company_linked>
+      <address>
+        <street>Kiekenmarkt</street>
+        <number>42</number>
+        <postal_code>1000</postal_code>
+        <city>Brussel</city>
+        <country>be</country>
+      </address>
+    </customer>
+    <registration_fee currency="eur">150.00</registration_fee>
+  </body>
+</message>"""
+
+
+# extract_customer_data tests
+
+def test_extract_customer_data_email() -> None:
+    """extract_customer_data must return the correct email."""
+    root = ET.fromstring(VALID_XML)
+    data = extract_customer_data(root)
+    assert data["email"] == "info@bedrijf.be"
+
+
+def test_extract_customer_data_fee() -> None:
+    """extract_customer_data must return the correct registration_fee and currency."""
+    root = ET.fromstring(VALID_XML)
+    data = extract_customer_data(root)
+    assert data["registration_fee"] == "150.00"
+    assert data["fee_currency"] == "eur"
+
+
+def test_extract_customer_data_address() -> None:
+    """extract_customer_data must return all address sub-fields."""
+    root = ET.fromstring(VALID_XML)
+    data = extract_customer_data(root)
+    assert data["address"]["street"] == "Kiekenmarkt"
+    assert data["address"]["city"] == "Brussel"
+    assert data["address"]["country"] == "be"
+
+
+# process_message integration tests
+
+def test_process_new_registration_acks_on_success() -> None:
+    """process_message must ack the message when FossBilling succeeds."""
+    channel = make_channel()
+    with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"):
+        process_message(channel, make_method(), MagicMock(), VALID_XML)
+    channel.basic_ack.assert_called_once()
+    channel.basic_nack.assert_not_called()
+
+
+def test_process_new_registration_nacks_to_dlq_on_fossbilling_failure() -> None:
+    """process_message must nack and send to DLQ when FossBilling raises an exception."""
+    channel = make_channel()
+    with patch(
+        "src.services.rabbitmq_receiver.create_registration_invoice",
+        side_effect=Exception("API unreachable")
+    ):
+        process_message(channel, make_method(), MagicMock(), VALID_XML)
+    channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
+    channel.basic_ack.assert_not_called()
+
+
+def test_process_new_registration_dlq_contains_fossbilling_error() -> None:
+    """DLQ message header must contain the FossBilling error description."""
+    channel = make_channel()
+    with patch(
+        "src.services.rabbitmq_receiver.create_registration_invoice",
+        side_effect=Exception("API unreachable")
+    ):
+        process_message(channel, make_method(), MagicMock(), VALID_XML)
+    headers = channel.basic_publish.call_args.kwargs["properties"].headers
+    assert any("fossbilling_failed" in e for e in headers["errors"].split("; "))

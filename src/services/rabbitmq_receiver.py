@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 import os
 import re
 import xml.etree.ElementTree as ET
+from src.services.fossbilling_api import create_registration_invoice
+from src.services.rabbitmq_sender import build_invoice_request_xml
 
 # ISO-8601 UTC pattern: 2026-02-24T18:30:00Z
 ISO8601_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -155,6 +157,24 @@ def validate_message(root: ET.Element) -> list[str]:
     return errors
 
 
+def extract_customer_data(root: ET.Element) -> dict:
+    """Extracts customer and registration data from a new_registration XML message."""
+    fee_el = root.find("body/registration_fee")
+    return {
+        "email": root.findtext("body/customer/email"),
+        "company_name": root.findtext("body/customer/company_name") or "",
+        "address": {
+            "street": root.findtext("body/customer/address/street"),
+            "number": root.findtext("body/customer/address/number"),
+            "postal_code": root.findtext("body/customer/address/postal_code"),
+            "city": root.findtext("body/customer/address/city"),
+            "country": root.findtext("body/customer/address/country"),
+        },
+        "registration_fee": root.findtext("body/registration_fee"),
+        "fee_currency": fee_el.get("currency", "eur") if fee_el is not None else "eur",
+    }
+
+
 def send_to_dlq(
     channel: pika.channel.Channel,
     body: bytes,
@@ -216,7 +236,24 @@ def process_message(
     msg_type = root.findtext("header/type")
     print(f"[RECEIVER] Valid message received | type={msg_type} | message_id={msg_id}")
 
-    # later we will add the fossbilling API call here
+    if msg_type == "new_registration":
+        customer_data = extract_customer_data(root)
+        try:
+            invoice_id = create_registration_invoice(customer_data)
+        except Exception as e:
+            send_to_dlq(channel, body, [f"ERROR: fossbilling_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        invoice_request_xml = build_invoice_request_xml(
+            invoice_id=invoice_id,
+            client_email=customer_data["email"],
+            correlation_id=msg_id,
+            company_name=customer_data["company_name"],
+        )
+        # TODO: send invoice_request_xml to mailing queue once queue name is confirmed
+        print(f"[RECEIVER] invoice_request ready | invoice_id={invoice_id} | correlation_id={msg_id}")
+
     channel.basic_ack(delivery_tag=method.delivery_tag)
 
 
