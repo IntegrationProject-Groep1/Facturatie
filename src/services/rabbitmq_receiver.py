@@ -4,6 +4,8 @@ import pika.spec
 from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
+from .fossbilling_api import create_registration_invoice
+from .rabbitmq_sender import build_invoice_request_xml, send_message
 
 from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq, ISO8601_UTC_PATTERN
@@ -125,6 +127,9 @@ def validate_message(root: ET.Element) -> list[str]:
                     f"ERROR: missing_required_field: address.{field}"
                 )
 
+        if not root.findtext("body/registration_fee"):
+            errors.append("ERROR: missing_required_field: registration_fee")
+
     # Conditional validation: payment_registered
     if msg_type == "payment_registered":
         correlation_id = root.findtext("header/correlation_id")
@@ -167,6 +172,45 @@ def validate_message(root: ET.Element) -> list[str]:
             )
 
     return errors
+
+
+def extract_customer_data(root: ET.Element) -> dict:
+    """Extracts customer and registration data from a new_registration XML message."""
+    fee_el = root.find("body/registration_fee")
+    return {
+        "email": root.findtext("body/customer/email"),
+        "company_name": root.findtext("body/customer/company_name") or "",
+        "address": {
+            "street": root.findtext("body/customer/address/street"),
+            "number": root.findtext("body/customer/address/number"),
+            "postal_code": root.findtext("body/customer/address/postal_code"),
+            "city": root.findtext("body/customer/address/city"),
+            "country": root.findtext("body/customer/address/country"),
+        },
+        "registration_fee": root.findtext("body/registration_fee"),
+        "fee_currency": fee_el.get("currency", "eur") if fee_el is not None else "eur",
+    }
+
+
+def send_to_dlq(
+    channel: pika.channel.Channel,
+    body: bytes,
+    errors: list[str]
+) -> None:
+    """Forwards an invalid message to the Dead Letter Queue."""
+    dlq = os.getenv("QUEUE_DLQ", "facturatie.dlq")
+    channel.queue_declare(queue=dlq, durable=True)
+    channel.basic_publish(
+        exchange="",
+        routing_key=dlq,
+        body=body,
+        properties=pika.BasicProperties(
+            delivery_mode=2,
+            content_type="application/xml",
+            headers={"errors": "; ".join(errors)}
+        )
+    )
+    print(f"[DLQ] Message forwarded to DLQ. Errors: {errors}")
 
 
 def process_message(
@@ -212,7 +256,24 @@ def process_message(
         f" | type={msg_type} | message_id={msg_id}"
     )
 
-    # later we will add the fossbilling API call here
+    if msg_type == "new_registration":
+        customer_data = extract_customer_data(root)
+        try:
+            invoice_id = create_registration_invoice(customer_data)
+        except Exception as e:
+            send_to_dlq(channel, body, [f"ERROR: fossbilling_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        invoice_request_xml = build_invoice_request_xml(
+            invoice_id=invoice_id,
+            client_email=customer_data["email"],
+            correlation_id=msg_id,
+            company_name=customer_data["company_name"],
+        )
+        send_message(invoice_request_xml, routing_key="facturatie.to.mailing", channel=channel)
+        print(f"[RECEIVER] invoice_request sent | invoice_id={invoice_id} | correlation_id={msg_id}")
+
     channel.basic_ack(delivery_tag=method.delivery_tag)
 
 

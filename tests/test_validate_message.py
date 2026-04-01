@@ -210,6 +210,8 @@ def build_registration_xml(
     postal_code: str = "1000",
     city: str = "Brussel",
     country: str = "be",
+    registration_fee: str = "150.00",
+    fee_currency: str = "eur",
 ) -> ET.Element:
     """Helper that builds a minimal valid new_registration XML element for testing."""
     root = ET.Element("message")
@@ -236,6 +238,11 @@ def build_registration_xml(
     ET.SubElement(address, "postal_code").text = postal_code
     ET.SubElement(address, "city").text = city
     ET.SubElement(address, "country").text = country
+
+    if registration_fee:
+        fee_el = ET.SubElement(body, "registration_fee")
+        fee_el.text = registration_fee
+        fee_el.set("currency", fee_currency)
 
     return root
 
@@ -306,6 +313,13 @@ def test_new_registration_missing_address_field(field: str, kwargs: dict) -> Non
     root = build_registration_xml(**kwargs)
     errors = validate_message(root)
     assert any(f"address.{field}" in e for e in errors)
+
+
+def test_new_registration_missing_registration_fee() -> None:
+    """Missing registration_fee must trigger missing_required_field error."""
+    root = build_registration_xml(registration_fee="")
+    errors = validate_message(root)
+    assert any("registration_fee" in e for e in errors)
 
 
 # Duplicate detection tests — use is_duplicate() directly

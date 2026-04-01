@@ -107,6 +107,41 @@ def send_message(
         connection.close()
 
 
+def build_invoice_request_xml(
+    invoice_id: str,
+    client_email: str,
+    correlation_id: str,
+    company_name: str = "",
+    source: str = "facturatie",
+) -> str:
+    """
+    Builds an invoice_request XML message to be sent to the Mailing team.
+    correlation_id must reference the message_id of the original new_registration message.
+    company_name is optional — only include when the client is a company.
+    """
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "version").text = "2.0"
+    ET.SubElement(header, "type").text = "invoice_request"
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "invoice_id").text = invoice_id
+    ET.SubElement(body, "client_email").text = client_email
+    if company_name:
+        ET.SubElement(body, "company_name").text = company_name
+
+    ET.indent(root, space="    ")
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+
+
 def send_error_to_monitor(error_message: str) -> None:
     """
     Sends an error notification to the central error queue (errors.facturatie).
