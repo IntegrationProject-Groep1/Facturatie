@@ -26,7 +26,7 @@ def cancel_invoice(invoice_id: str) -> bool:
             data={"id": invoice_id, "status": "cancelled"},
             auth=(api_username, api_token),
             timeout=10,
-            verify=False,
+            verify=True,
         )
         if response.status_code == 200:
             print(f"[FOSSBILLING] Invoice '{invoice_id}' successfully marked as cancelled")
