@@ -1,5 +1,4 @@
 import os
-import re
 import xml.etree.ElementTree as ET
 
 import pika
@@ -8,24 +7,11 @@ import pika.spec
 from dotenv import load_dotenv
 
 from src.services import fossbilling_client, crm_publisher
+from src.services.rabbitmq_utils import (
+    get_connection, send_to_dlq, ISO8601_UTC_PATTERN
+)
 
 load_dotenv()
-
-ISO8601_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-
-
-def get_connection() -> pika.BlockingConnection:
-    credentials = pika.PlainCredentials(
-        os.getenv("RABBITMQ_USER"),
-        os.getenv("RABBITMQ_PASSWORD")
-    )
-    parameters = pika.ConnectionParameters(
-        host=os.getenv("RABBITMQ_HOST"),
-        port=int(os.getenv("RABBITMQ_PORT", 5672)),
-        virtual_host=os.getenv("RABBITMQ_VHOST", "/"),
-        credentials=credentials
-    )
-    return pika.BlockingConnection(parameters)
 
 
 def validate_invoice_cancelled(root: ET.Element) -> list[str]:
@@ -48,9 +34,13 @@ def validate_invoice_cancelled(root: ET.Element) -> list[str]:
     if not msg_id:
         errors.append("WARN: missing_required_field: message_id")
     if not version or version != "2.0":
-        errors.append(f"ERROR: invalid or missing version (expected 2.0, got '{version}')")
+        errors.append(
+            f"ERROR: invalid or missing version (expected 2.0, got '{version}')"
+        )
     if not msg_type or msg_type != "invoice_cancelled":
-        errors.append(f"ERROR: expected type invoice_cancelled, got '{msg_type}'")
+        errors.append(
+            f"ERROR: expected type invoice_cancelled, got '{msg_type}'"
+        )
     if not timestamp:
         errors.append("WARN: missing_required_field: timestamp")
     elif not ISO8601_UTC_PATTERN.match(timestamp):
@@ -70,27 +60,6 @@ def validate_invoice_cancelled(root: ET.Element) -> list[str]:
     return errors
 
 
-def send_to_dlq(
-    channel: pika.channel.Channel,
-    body: bytes,
-    errors: list[str],
-) -> None:
-    """Forwards an invalid or failed message to the Dead Letter Queue."""
-    dlq = os.getenv("QUEUE_DLQ", "facturatie.dlq")
-    channel.queue_declare(queue=dlq, durable=True)
-    channel.basic_publish(
-        exchange="",
-        routing_key=dlq,
-        body=body,
-        properties=pika.BasicProperties(
-            delivery_mode=2,
-            content_type="application/xml",
-            headers={"errors": "; ".join(errors)},
-        )
-    )
-    print(f"[CANCELLATION] Message forwarded to DLQ. Errors: {errors}")
-
-
 def process_message(
     channel: pika.channel.Channel,
     method: pika.spec.Basic.Deliver,
@@ -102,19 +71,13 @@ def process_message(
     # Step 1: parse XML
     try:
         root = ET.fromstring(body)
-    except ET.ParseError as e:
+    except (ET.ParseError, UnicodeDecodeError) as e:
         print(f"[CANCELLATION] ERROR: Invalid XML — {e}")
         send_to_dlq(channel, body, [f"ERROR: invalid_xml: {e}"])
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
-    # Step 2: filter — only handle invoice_cancelled messages
-    msg_type = root.findtext("header/type")
-    if msg_type != "invoice_cancelled":
-        channel.basic_ack(delivery_tag=method.delivery_tag)
-        return
-
-    # Step 3: validate
+    # Step 2: validate
     errors = validate_invoice_cancelled(root)
     if errors:
         for error in errors:
@@ -128,26 +91,33 @@ def process_message(
     correlation_id = root.findtext("header/correlation_id")
     msg_id = root.findtext("header/message_id")
 
-    print(f"[CANCELLATION] Processing invoice_cancelled | invoice={invoice_id} | message_id={msg_id}")
+    print(
+        f"[CANCELLATION] Processing invoice_cancelled"
+        f" | invoice={invoice_id} | message_id={msg_id}"
+    )
 
     # Step 4: cancel invoice in FossBilling
     success = fossbilling_client.cancel_invoice(invoice_id)
     if not success:
-        error_msg = f"ERROR: FossBilling failed to cancel invoice '{invoice_id}'"
+        error_msg = (
+            f"ERROR: FossBilling failed to cancel invoice '{invoice_id}'"
+        )
         print(f"[CANCELLATION] {error_msg}")
         send_to_dlq(channel, body, [error_msg])
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
     # Step 5: notify CRM
-    crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
+    crm_publisher.publish_invoice_cancelled(
+        invoice_id, customer_id, correlation_id
+    )
     print(f"[CANCELLATION] Flow complete for invoice '{invoice_id}'")
     channel.basic_ack(delivery_tag=method.delivery_tag)
 
 
 def start_receiver(queue: str | None = None) -> None:
     if queue is None:
-        queue = os.getenv("QUEUE_INCOMING", "facturatie.incoming")
+        queue = os.getenv("QUEUE_CANCELLATIONS", "facturatie.cancellations")
     connection = get_connection()
     channel = connection.channel()
 

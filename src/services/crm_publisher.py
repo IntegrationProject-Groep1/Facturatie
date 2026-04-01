@@ -1,4 +1,3 @@
-import os
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -6,23 +5,11 @@ from datetime import datetime, timezone
 import pika
 from dotenv import load_dotenv
 
+from src.services.rabbitmq_utils import get_connection
+
 load_dotenv()
 
 CRM_QUEUE = "crm"
-
-
-def get_connection() -> pika.BlockingConnection:
-    credentials = pika.PlainCredentials(
-        os.getenv("RABBITMQ_USER"),
-        os.getenv("RABBITMQ_PASSWORD")
-    )
-    parameters = pika.ConnectionParameters(
-        host=os.getenv("RABBITMQ_HOST"),
-        port=int(os.getenv("RABBITMQ_PORT", 5672)),
-        virtual_host=os.getenv("RABBITMQ_VHOST", "/"),
-        credentials=credentials
-    )
-    return pika.BlockingConnection(parameters)
 
 
 def build_invoice_cancelled_xml(
@@ -49,7 +36,10 @@ def build_invoice_cancelled_xml(
     ET.SubElement(body, "customer_id").text = customer_id
 
     ET.indent(root, space="    ")
-    return f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
 
 
 def publish_invoice_cancelled(
@@ -58,7 +48,9 @@ def publish_invoice_cancelled(
     correlation_id: str,
 ) -> None:
     """Publishes an invoice_cancelled message to the CRM queue."""
-    xml_message = build_invoice_cancelled_xml(invoice_id, customer_id, correlation_id)
+    xml_message = build_invoice_cancelled_xml(
+        invoice_id, customer_id, correlation_id
+    )
     connection = get_connection()
     channel = connection.channel()
     channel.queue_declare(queue=CRM_QUEUE, durable=True)
@@ -71,5 +63,8 @@ def publish_invoice_cancelled(
             content_type="application/xml",
         )
     )
-    print(f"[CRM_PUBLISHER] invoice_cancelled sent to '{CRM_QUEUE}' for invoice '{invoice_id}'")
+    print(
+        f"[CRM_PUBLISHER] invoice_cancelled sent to '{CRM_QUEUE}'"
+        f" for invoice '{invoice_id}'"
+    )
     connection.close()

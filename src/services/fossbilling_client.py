@@ -21,12 +21,12 @@ def cancel_invoice(invoice_id: str) -> bool:
 
     url = f"{base_url}/api/admin/invoice/update"
     try:
+        # SSL verification is enabled by default (required for security)
         response = requests.post(
             url,
             data={"id": invoice_id, "status": "cancelled"},
             auth=(api_username, api_token),
             timeout=10,
-            verify=True,
         )
         if response.status_code == 200:
             print(f"[FOSSBILLING] Invoice '{invoice_id}' successfully marked as cancelled")

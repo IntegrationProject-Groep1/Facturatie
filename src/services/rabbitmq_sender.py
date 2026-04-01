@@ -5,25 +5,10 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 import os
+from src.services.rabbitmq_utils import get_connection
 
 # Load environment variables from the .env file
 load_dotenv()
-
-
-def get_connection() -> pika.BlockingConnection:
-    # Build credentials using the RabbitMQ username and password from environment variables
-    credentials = pika.PlainCredentials(
-        os.getenv('RABBITMQ_USER'),
-        os.getenv('RABBITMQ_PASSWORD')
-    )
-    parameters = pika.ConnectionParameters(
-        host=os.getenv('RABBITMQ_HOST'),
-        port=int(os.getenv('RABBITMQ_PORT', 5672)),
-        virtual_host=os.getenv('RABBITMQ_VHOST', '/'),
-        credentials=credentials
-    )
-    # Open and return a blocking connection to the RabbitMQ broker
-    return pika.BlockingConnection(parameters)
 
 
 def build_consumption_order_xml(
@@ -35,8 +20,8 @@ def build_consumption_order_xml(
     source: str = "kassa_bar_01",
 ) -> str:
     """
-    Builds a consumption_order XML message using ElementTree so all input values
-    are automatically escaped, preventing XML injection.
+    Builds a consumption_order XML message using ElementTree so all input
+    values are automatically escaped, preventing XML injection.
     """
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -55,7 +40,9 @@ def build_consumption_order_xml(
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")
     ET.SubElement(customer, "id").text = customer_id
-    ET.SubElement(customer, "is_company_linked").text = "true" if is_company_linked else "false"
+    ET.SubElement(customer, "is_company_linked").text = (
+        "true" if is_company_linked else "false"
+    )
     # company_id and company_name are only included when is_company_linked is True
     if is_company_linked:
         ET.SubElement(customer, "company_id").text = company_id
@@ -74,7 +61,10 @@ def build_consumption_order_xml(
         ET.SubElement(item_el, "vat_rate").text = str(item["vat_rate"])
 
     ET.indent(root, space="    ")
-    return f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
 
 
 def send_message(
@@ -85,7 +75,8 @@ def send_message(
     """
     Publishes an XML message to a RabbitMQ queue.
     Pass an existing channel to reuse a connection across multiple messages.
-    If no channel is provided, a temporary connection is opened and closed automatically.
+    If no channel is provided, a temporary connection is opened and closed
+    automatically.
     routing_key defaults to QUEUE_INCOMING (facturatie.incoming).
     Use 'heartbeat' for the central monitoring queue (no team prefix).
     Use 'facturatie.to.<team>' for outgoing messages to other teams.
@@ -119,8 +110,8 @@ def send_message(
 def send_error_to_monitor(error_message: str) -> None:
     """
     Sends an error notification to the central error queue (errors.facturatie).
-    Call this when a critical failure occurs (e.g. database offline, API failure).
-    Conform sectie 7 van de Sidecar Architectuur.
+    Call this when a critical failure occurs (e.g. database offline, API
+    failure). Conform sectie 7 van de Sidecar Architectuur.
     """
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -129,7 +120,10 @@ def send_error_to_monitor(error_message: str) -> None:
     ET.SubElement(root, "timestamp").text = timestamp
     ET.SubElement(root, "message").text = error_message
 
-    xml_error = f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+    xml_error = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
     send_message(xml_error, routing_key="errors.facturatie")
 
 
