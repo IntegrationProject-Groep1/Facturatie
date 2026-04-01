@@ -101,8 +101,8 @@ def process_message(
 
     # Step 1: parse XML
     try:
-        root = ET.fromstring(body.decode("utf-8"))
-    except (ET.ParseError, UnicodeDecodeError) as e:
+        root = ET.fromstring(body)
+    except ET.ParseError as e:
         print(f"[CANCELLATION] ERROR: Invalid XML — {e}")
         send_to_dlq(channel, body, [f"ERROR: invalid_xml: {e}"])
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
