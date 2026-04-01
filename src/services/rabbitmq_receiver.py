@@ -192,27 +192,6 @@ def extract_customer_data(root: ET.Element) -> dict:
     }
 
 
-def send_to_dlq(
-    channel: pika.channel.Channel,
-    body: bytes,
-    errors: list[str]
-) -> None:
-    """Forwards an invalid message to the Dead Letter Queue."""
-    dlq = os.getenv("QUEUE_DLQ", "facturatie.dlq")
-    channel.queue_declare(queue=dlq, durable=True)
-    channel.basic_publish(
-        exchange="",
-        routing_key=dlq,
-        body=body,
-        properties=pika.BasicProperties(
-            delivery_mode=2,
-            content_type="application/xml",
-            headers={"errors": "; ".join(errors)}
-        )
-    )
-    print(f"[DLQ] Message forwarded to DLQ. Errors: {errors}")
-
-
 def process_message(
     channel: pika.channel.Channel,
     method: pika.spec.Basic.Deliver,
