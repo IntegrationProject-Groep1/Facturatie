@@ -194,6 +194,134 @@ def test_valid_version() -> None:
     assert not any("version" in e.lower() for e in errors)
 
 
+# new_registration tests
+
+def build_registration_xml(
+    msg_id: str = "a1b2c3d4-0000-4000-8000-000000000001",
+    version: str = "2.0",
+    timestamp: str = "2026-03-30T10:00:00Z",
+    source: str = "frontend",
+    email: str = "info@bedrijf.be",
+    is_company_linked: str = "false",
+    company_id: str = "",
+    company_name: str = "",
+    street: str = "Kiekenmarkt",
+    number: str = "42",
+    postal_code: str = "1000",
+    city: str = "Brussel",
+    country: str = "be",
+    registration_fee: str = "150.00",
+    fee_currency: str = "eur",
+) -> ET.Element:
+    """Helper that builds a minimal valid new_registration XML element for testing."""
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = msg_id
+    ET.SubElement(header, "version").text = version
+    ET.SubElement(header, "type").text = "new_registration"
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+
+    body = ET.SubElement(root, "body")
+    customer = ET.SubElement(body, "customer")
+    ET.SubElement(customer, "email").text = email
+    ET.SubElement(customer, "is_company_linked").text = is_company_linked
+    if company_id:
+        ET.SubElement(customer, "company_id").text = company_id
+    if company_name:
+        ET.SubElement(customer, "company_name").text = company_name
+
+    address = ET.SubElement(customer, "address")
+    ET.SubElement(address, "street").text = street
+    ET.SubElement(address, "number").text = number
+    ET.SubElement(address, "postal_code").text = postal_code
+    ET.SubElement(address, "city").text = city
+    ET.SubElement(address, "country").text = country
+
+    if registration_fee:
+        fee_el = ET.SubElement(body, "registration_fee")
+        fee_el.text = registration_fee
+        fee_el.set("currency", fee_currency)
+
+    return root
+
+
+def test_valid_new_registration() -> None:
+    """A fully valid new_registration should return no errors."""
+    root = build_registration_xml()
+    errors = validate_message(root)
+    assert errors == []
+
+
+def test_valid_new_registration_company_linked() -> None:
+    """A valid new_registration with is_company_linked=true should return no errors."""
+    root = build_registration_xml(
+        is_company_linked="true",
+        company_id="FOSS-CUST-200",
+        company_name="Bedrijf NV"
+    )
+    errors = validate_message(root)
+    assert errors == []
+
+
+def test_new_registration_missing_email() -> None:
+    """Missing email must trigger missing_required_field error."""
+    root = build_registration_xml(email="")
+    errors = validate_message(root)
+    assert any("missing_required_field" in e and "email" in e for e in errors)
+
+
+def test_new_registration_missing_is_company_linked() -> None:
+    """Missing is_company_linked must trigger missing_required_field error."""
+    root = build_registration_xml(is_company_linked="")
+    errors = validate_message(root)
+    assert any("missing_required_field" in e and "is_company_linked" in e for e in errors)
+
+
+def test_new_registration_missing_company_id_when_linked() -> None:
+    """company_id must be present when is_company_linked=true."""
+    root = build_registration_xml(
+        is_company_linked="true",
+        company_id="",
+        company_name="Bedrijf NV"
+    )
+    errors = validate_message(root)
+    assert any("company_id" in e for e in errors)
+
+
+def test_new_registration_missing_company_name_when_linked() -> None:
+    """company_name must be present when is_company_linked=true."""
+    root = build_registration_xml(
+        is_company_linked="true",
+        company_id="FOSS-CUST-200",
+        company_name=""
+    )
+    errors = validate_message(root)
+    assert any("company_name" in e for e in errors)
+
+
+@pytest.mark.parametrize("field,kwargs", [
+    ("street",      {"street": ""}),
+    ("number",      {"number": ""}),
+    ("postal_code", {"postal_code": ""}),
+    ("city",        {"city": ""}),
+    ("country",     {"country": ""}),
+])
+def test_new_registration_missing_address_field(field: str, kwargs: dict) -> None:
+    """Each missing address sub-field must trigger a missing_required_field error."""
+    root = build_registration_xml(**kwargs)
+    errors = validate_message(root)
+    assert any(f"address.{field}" in e for e in errors)
+
+
+def test_new_registration_missing_registration_fee() -> None:
+    """Missing registration_fee must trigger missing_required_field error."""
+    root = build_registration_xml(registration_fee="")
+    errors = validate_message(root)
+    assert any("registration_fee" in e for e in errors)
+
+
 # Duplicate detection tests — use is_duplicate() directly
 
 def test_duplicate_message_is_flagged() -> None:
