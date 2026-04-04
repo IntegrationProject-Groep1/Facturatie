@@ -155,11 +155,8 @@ def extract_customer_data(root: ET.Element) -> dict:
         "email": root.findtext("body/customer/email"),
         "company_name": root.findtext("body/customer/company_name") or "",
         "address": {
-            "street": root.findtext("body/customer/address/street") or "",
-            "number": root.findtext("body/customer/address/number") or "",
-            "postal_code": root.findtext("body/customer/address/postal_code") or "",
-            "city": root.findtext("body/customer/address/city") or "",
-            "country": root.findtext("body/customer/address/country") or "",
+            field: root.findtext(f"body/customer/address/{field}") or ""
+            for field in ["street", "number", "postal_code", "city", "country"]
         },
         "registration_fee": root.findtext("body/registration_fee"),
         "fee_currency": fee_el.get("currency", "eur") if fee_el is not None else "eur",
