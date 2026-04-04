@@ -115,7 +115,7 @@ def build_invoice_request_xml(
     source: str = "facturatie",
 ) -> str:
     """
-    Builds an invoice_request XML message to be sent to the Mailing team.
+    Builds an invoice XML message to be sent to the Mailing team.
     correlation_id must reference the message_id of the original new_registration message.
     company_name is optional — only include when the client is a company.
     """
@@ -127,7 +127,7 @@ def build_invoice_request_xml(
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
     ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "invoice_request"
+    ET.SubElement(header, "type").text = "invoice"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
     ET.SubElement(header, "correlation_id").text = correlation_id

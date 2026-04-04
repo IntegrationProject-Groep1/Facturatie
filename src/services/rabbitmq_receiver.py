@@ -121,11 +121,7 @@ def validate_message(root: ET.Element) -> list[str]:
                     "ERROR: company_name required when is_company_linked=true"
                 )
 
-        for field in ["street", "number", "postal_code", "city", "country"]:
-            if not root.findtext(f"body/customer/address/{field}"):
-                errors.append(
-                    f"ERROR: missing_required_field: address.{field}"
-                )
+        # Address fields are optional — CRM may not always include them
 
         if not root.findtext("body/registration_fee"):
             errors.append("ERROR: missing_required_field: registration_fee")
