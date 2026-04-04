@@ -134,28 +134,6 @@ def validate_message(root: ET.Element) -> list[str]:
                 "ERROR: correlation_id required for payment_registered"
             )
 
-    # Conditional validation: new_registration
-    if msg_type == "new_registration":
-        email = root.findtext("body/customer/email")
-        is_company = root.findtext("body/customer/is_company_linked")
-        if not email:
-            errors.append("ERROR: email required for new_registration")
-        if not is_company:
-            errors.append(
-                "ERROR: is_company_linked required for new_registration"
-            )
-        if is_company == "true":
-            company_id = root.findtext("body/customer/company_id")
-            company_name = root.findtext("body/customer/company_name")
-            if not company_id:
-                errors.append(
-                    "ERROR: company_id required when is_company_linked=true"
-                )
-            if not company_name:
-                errors.append(
-                    "ERROR: company_name required when is_company_linked=true"
-                )
-
     # Conditional validation: invoice_cancelled
     if msg_type == "invoice_cancelled":
         invoice_id = root.findtext("body/invoice_id")
