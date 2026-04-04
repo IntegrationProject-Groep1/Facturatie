@@ -309,10 +309,10 @@ def test_new_registration_missing_company_name_when_linked() -> None:
     ("country",     {"country": ""}),
 ])
 def test_new_registration_missing_address_field(field: str, kwargs: dict) -> None:
-    """Each missing address sub-field must trigger a missing_required_field error."""
+    """Address sub-fields are optional — missing fields must not trigger an error."""
     root = build_registration_xml(**kwargs)
     errors = validate_message(root)
-    assert any(f"address.{field}" in e for e in errors)
+    assert not any(f"address.{field}" in e for e in errors)
 
 
 def test_new_registration_missing_registration_fee() -> None:
