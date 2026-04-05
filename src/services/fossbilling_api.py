@@ -63,15 +63,25 @@ def _get_or_create_client(customer_data: dict) -> int:
     return _create_client(customer_data)
 
 
-def _create_invoice(client_id: int, fee: str, currency: str) -> str:
-    """Creates a registration invoice for a client in FossBilling. Returns the invoice_id."""
-    payload = {
-        "client_id": client_id,
-        "items[0][title]": "Inschrijvingskosten",
-        "items[0][price]": fee,
-        "items[0][quantity]": 1,
-        "items[0][unit]": currency.upper(),
-    }
+def _create_invoice(client_id: int, items: list[dict]) -> str:
+    """Creates an invoice for a client in FossBilling. Returns the invoice_id.
+
+    Each item dict must contain:
+        title (str), price (str), quantity (int)
+    Optional fields per item:
+        currency (str), vat_rate (int|str), sku (str)
+    """
+    payload = {"client_id": client_id}
+    for i, item in enumerate(items):
+        payload[f"items[{i}][title]"] = item["title"]
+        payload[f"items[{i}][price]"] = item["price"]
+        payload[f"items[{i}][quantity]"] = item.get("quantity", 1)
+        if item.get("currency"):
+            payload[f"items[{i}][unit]"] = str(item["currency"]).upper()
+        if item.get("vat_rate"):
+            payload[f"items[{i}][taxrate]"] = item["vat_rate"]
+        if item.get("sku"):
+            payload[f"items[{i}][sku]"] = item["sku"]
     result = _api_post("admin/invoice/prepare", payload)
     return str(result["result"])
 
@@ -83,15 +93,17 @@ def create_registration_invoice(customer_data: dict) -> str:
     Returns the invoice_id on success.
     Raises Exception if all retries are exhausted.
     """
+    items = [{
+        "title": "Inschrijvingskosten",
+        "price": customer_data["registration_fee"],
+        "quantity": 1,
+        "currency": customer_data.get("fee_currency", "eur"),
+    }]
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             client_id = _get_or_create_client(customer_data)
-            invoice_id = _create_invoice(
-                client_id,
-                customer_data["registration_fee"],
-                customer_data.get("fee_currency", "eur"),
-            )
+            invoice_id = _create_invoice(client_id, items)
             print(f"[FOSSBILLING] Invoice created | invoice_id={invoice_id} | attempt={attempt}/{MAX_RETRIES}")
             return invoice_id
         except Exception as e:
