@@ -6,7 +6,7 @@ import pika.channel
 import pika.spec
 from dotenv import load_dotenv
 
-from src.services import fossbilling_client, crm_publisher
+from src.services import fossbilling_api as fossbilling_client, crm_publisher
 from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq, ISO8601_UTC_PATTERN
 )

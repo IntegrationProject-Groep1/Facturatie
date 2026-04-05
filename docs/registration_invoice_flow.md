@@ -1,47 +1,47 @@
-# Documentatie: Inschrijvingskosten-flow
+# Documentation: Registration Invoice Flow
 
 **Project:** Facturatie Microservice
 **Branch:** `Inschrijvingskosten-flow`
-**Datum:** 2026-03-31
-**Auteur:** Team Facturatie
+**Date:** 2026-04-05
+**Author:** Team Facturatie
 
 ---
 
-## 1. Overzicht
+## 1. Overview
 
-De inschrijvingskosten-flow verwerkt nieuwe klantregistraties afkomstig van het Frontend team. Wanneer een nieuwe klant zich registreert, ontvangt de Facturatie service een bericht via RabbitMQ, maakt automatisch een factuur aan in het FossBilling facturatiesysteem, en stuurt vervolgens een bevestigingsbericht naar het Mailing team om de factuur naar de klant te verzenden.
+The registration invoice flow processes new customer registrations received from the CRM team. When a new customer registers, the Facturatie service receives a message via RabbitMQ, automatically creates a client and invoice in FossBilling, and sends a confirmation message to the Mailing team to deliver the invoice to the customer.
 
 ---
 
-## 2. Architectuur en berichtenstroom
+## 2. Architecture and message flow
 
 ```
-Frontend
+CRM
    |
-   | new_registration (RabbitMQ: facturatie.incoming)
+   | new_registration (RabbitMQ: crm.to.facturatie)
    v
 Facturatie service
-   |-- Validatie mislukt  -->  Dead Letter Queue (facturatie.dlq)
-   |-- FossBilling fout   -->  Dead Letter Queue (facturatie.dlq)
+   |-- Validation failed  -->  Dead Letter Queue (facturatie.dlq)
+   |-- FossBilling error  -->  Dead Letter Queue (facturatie.dlq)
    |
-   | Klant + factuur aangemaakt (FossBilling API)
+   | Client + invoice created (FossBilling API)
    |
-   | invoice_request (RabbitMQ: facturatie.to.mailing)
+   | invoice (RabbitMQ: facturatie.to.mailing)
    v
 Mailing team
    |
-   | Factuur verstuurd naar klant
+   | Invoice sent to customer
    v
-Klant
+Customer
 ```
 
 ---
 
-## 3. Berichtformaat
+## 3. Message format
 
-### 3.1 Inkomend bericht: `new_registration`
+### 3.1 Incoming message: `new_registration`
 
-Ontvangen via queue: **`facturatie.incoming`**
+Received via queue: **`crm.to.facturatie`**
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -51,19 +51,21 @@ Ontvangen via queue: **`facturatie.incoming`**
     <version>2.0</version>
     <type>new_registration</type>
     <timestamp>2026-03-31T10:00:00Z</timestamp>
-    <source>frontend</source>
+    <source>crm</source>
   </header>
   <body>
     <customer>
-      <email>klant@bedrijf.be</email>
+      <email>customer@company.be</email>
+      <first_name>Jan</first_name>
+      <last_name>Peeters</last_name>
       <is_company_linked>true</is_company_linked>
       <company_id>123</company_id>
-      <company_name>Bedrijf NV</company_name>
+      <company_name>Company NV</company_name>
       <address>
         <street>Kiekenmarkt</street>
         <number>42</number>
         <postal_code>1000</postal_code>
-        <city>Brussel</city>
+        <city>Brussels</city>
         <country>be</country>
       </address>
     </customer>
@@ -72,25 +74,32 @@ Ontvangen via queue: **`facturatie.incoming`**
 </message>
 ```
 
-**Verplichte velden:**
+**Required fields:**
 
-| Veld | Beschrijving |
+| Field | Description |
 |---|---|
-| `header/message_id` | Unieke berichtidentificatie (UUID) |
-| `header/version` | Moet `2.0` zijn |
-| `header/type` | Moet `new_registration` zijn (lowercase) |
-| `header/timestamp` | ISO-8601 UTC formaat (bijv. `2026-03-31T10:00:00Z`) |
-| `header/source` | Naam van het verzendende systeem |
-| `body/customer/email` | E-mailadres van de klant |
-| `body/customer/is_company_linked` | `true` of `false` |
-| `body/customer/company_id` | Verplicht als `is_company_linked=true` |
-| `body/customer/company_name` | Verplicht als `is_company_linked=true` |
-| `body/customer/address/*` | Alle adresvelden verplicht (street, number, postal_code, city, country) |
-| `body/registration_fee` | Bedrag van de inschrijvingskost |
+| `header/message_id` | Unique message identifier (UUID) |
+| `header/version` | Must be `2.0` |
+| `header/type` | Must be `new_registration` (lowercase) |
+| `header/timestamp` | ISO-8601 UTC format (e.g. `2026-03-31T10:00:00Z`) |
+| `header/source` | Name of the sending system |
+| `body/customer/email` | Customer email address |
+| `body/customer/is_company_linked` | `true` or `false` |
+| `body/customer/company_id` | Required if `is_company_linked=true` |
+| `body/customer/company_name` | Required if `is_company_linked=true` |
+| `body/registration_fee` | Registration fee amount |
 
-### 3.2 Uitgaand bericht: `invoice_request`
+**Optional fields:**
 
-Verstuurd naar queue: **`facturatie.to.mailing`**
+| Field | Description |
+|---|---|
+| `body/customer/first_name` | Customer first name |
+| `body/customer/last_name` | Customer last name |
+| `body/customer/address/*` | Address fields (street, number, postal_code, city, country) |
+
+### 3.2 Outgoing message: `invoice`
+
+Sent to queue: **`facturatie.to.mailing`**
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -98,103 +107,104 @@ Verstuurd naar queue: **`facturatie.to.mailing`**
   <header>
     <message_id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</message_id>
     <version>2.0</version>
-    <type>invoice_request</type>
+    <type>invoice</type>
     <timestamp>2026-03-31T10:00:05Z</timestamp>
     <source>facturatie</source>
     <correlation_id>550e8400-e29b-41d4-a716-446655440000</correlation_id>
   </header>
   <body>
     <invoice_id>INV-2026-001</invoice_id>
-    <client_email>klant@bedrijf.be</client_email>
-    <company_name>Bedrijf NV</company_name>
+    <client_email>customer@company.be</client_email>
+    <company_name>Company NV</company_name>
   </body>
 </message>
 ```
 
-De `correlation_id` in de header verwijst naar de `message_id` van het oorspronkelijke `new_registration` bericht, zodat het Mailing team berichten kan koppelen.
+The `correlation_id` in the header references the `message_id` of the original `new_registration` message, allowing the Mailing team to link messages.
 
 ---
 
-## 4. Verwerkingslogica
+## 4. Processing logic
 
-De service doorloopt bij elk ontvangen bericht de volgende stappen:
+For each received message, the service follows these steps:
 
-1. **XML-parsing** — ongeldig XML of verkeerde encoding → DLQ
-2. **Duplicaatdetectie** — zelfde `message_id` reeds verwerkt → genegeerd (ACK)
-3. **Validatie** — ontbrekende of ongeldige velden → DLQ
-4. **Klant aanmaken in FossBilling** — idempotent: als het e-mailadres al bestaat, wordt de bestaande klant hergebruikt
-5. **Factuur aanmaken in FossBilling** — endpoint: `admin/invoice/prepare`
-6. **Retry-logica** — stappen 4 en 5 worden bij een fout tot **3 keer** herhaald met een vertraging van 2 seconden; na 3 mislukte pogingen → DLQ
-7. **invoice_request versturen** naar `facturatie.to.mailing`
-8. **ACK** — bericht wordt bevestigd als verwerkt
+1. **XML parsing** — invalid XML or bad encoding → DLQ
+2. **Duplicate detection** — same `message_id` already processed → ignored (ACK)
+3. **Validation** — missing or invalid fields → DLQ
+4. **Create client in FossBilling** — idempotent: if the email already exists, the existing client is reused
+5. **Create invoice in FossBilling** — endpoint: `admin/invoice/prepare`
+6. **Retry logic** — steps 4 and 5 are retried up to **3 times** with a 2-second delay on failure; after 3 failed attempts → DLQ
+7. **Send `invoice` message** to `facturatie.to.mailing`
+8. **ACK** — message is acknowledged as processed
 
 ---
 
-## 5. FossBilling integratie
+## 5. FossBilling integration
 
-De service communiceert met de FossBilling REST API via HTTP Basic Auth.
+The service communicates with the FossBilling REST API via HTTP Basic Auth.
 
-| Instelling | Omgevingsvariabele | Voorbeeld |
+| Setting | Environment variable | Example |
 |---|---|---|
-| API-URL | `BILLING_API_URL` | `https://server/api` |
-| Gebruikersnaam | `BILLING_API_USERNAME` | `admin` |
-| API-token | `BILLING_API_TOKEN` | *(gegenereerd in FossBilling)* |
+| API URL | `BILLING_API_URL` | `https://server/api` |
+| Username | `BILLING_API_USERNAME` | `admin` |
+| API token | `BILLING_API_TOKEN` | *(generated in FossBilling)* |
 
-Het API-token wordt gegenereerd via: **FossBilling admin → Account → API tokens → Generate new key**
+Generate the API token via: **FossBilling admin → Account → API tokens → Generate new key**
 
 ---
 
 ## 6. Queues
 
-| Queue | Richting | Doel |
+| Queue | Direction | Purpose |
 |---|---|---|
-| `facturatie.incoming` | Inkomend | Berichten van Frontend ontvangen |
-| `facturatie.dlq` | Uitgaand | Ongeldige of gefaalde berichten |
-| `facturatie.to.mailing` | Uitgaand | Factuurverzoeken naar Mailing team |
+| `crm.to.facturatie` | Incoming | Receive messages from CRM |
+| `facturatie.dlq` | Outgoing | Invalid or failed messages |
+| `facturatie.to.mailing` | Outgoing | Invoice messages to Mailing team |
 
 ---
 
-## 7. Foutafhandeling
+## 7. Error handling
 
-| Situatie | Gedrag |
+| Situation | Behaviour |
 |---|---|
-| Ongeldig XML | Doorgestuurd naar DLQ, bericht geweigerd (NACK) |
-| Validatiefouten | Doorgestuurd naar DLQ met foutmelding in header, bericht geweigerd |
-| Dubbel bericht | Genegeerd, bericht bevestigd (ACK) |
-| FossBilling fout | Max. 3 pogingen, daarna DLQ + NACK |
-| Bestaande klant | Bestaande client_id hergebruikt (idempotent) |
+| Invalid XML | Forwarded to DLQ, message rejected (NACK) |
+| Validation errors | Forwarded to DLQ with error details in header, message rejected |
+| Duplicate message | Ignored, message acknowledged (ACK) |
+| FossBilling error | Max. 3 attempts, then DLQ + NACK |
+| Existing client | Existing client_id reused (idempotent) |
 
 ---
 
-## 8. Geïmplementeerde bestanden
+## 8. Implemented files
 
-| Bestand | Status | Beschrijving |
+| File | Status | Description |
 |---|---|---|
-| `src/services/rabbitmq_receiver.py` | Aangepast | Validatie, verwerking en DLQ-logica |
-| `src/services/rabbitmq_sender.py` | Aangepast | `build_invoice_request_xml()` toegevoegd |
-| `src/services/fossbilling_api.py` | Nieuw | FossBilling API-integratie met retry |
-| `tests/test_validate_message.py` | Aangepast | +12 tests voor new_registration validatie |
-| `tests/test_invoice_request.py` | Nieuw | 9 tests voor invoice_request builder |
-| `tests/test_fossbilling_api.py` | Nieuw | 13 tests voor FossBilling API service |
-| `tests/test_process_new_registration.py` | Nieuw | 7 tests voor process_message integratie |
+| `src/services/rabbitmq_receiver.py` | Modified | Validation, processing and DLQ logic |
+| `src/services/rabbitmq_sender.py` | Modified | `build_invoice_request_xml()` added |
+| `src/services/fossbilling_api.py` | New | FossBilling API integration with retry |
+| `tests/test_validate_message.py` | Modified | +12 tests for new_registration validation |
+| `tests/test_invoice_request.py` | New | 9 tests for invoice message builder |
+| `tests/test_fossbilling_api.py` | New | 18 tests for FossBilling API service |
+| `tests/test_process_new_registration.py` | New | 7 tests for process_message integration |
 
 ---
 
-## 9. Testresultaten
+## 9. Test results
 
-Alle bestaande en nieuwe tests slagen.
+All tests pass.
 
-| Testbestand | Aantal tests |
+| Test file | Tests |
 |---|---|
-| `test_validate_message.py` | 12 nieuw |
-| `test_invoice_request.py` | 9 nieuw |
-| `test_fossbilling_api.py` | 13 nieuw |
-| `test_process_new_registration.py` | 7 nieuw |
-| **Totaal nieuw** | **41 tests** |
-| **Totaal project** | **63 tests geslaagd** |
+| `test_validate_message.py` | 12 new |
+| `test_invoice_request.py` | 9 new |
+| `test_fossbilling_api.py` | 18 new |
+| `test_process_new_registration.py` | 7 new |
+| **Total new** | **46 tests** |
+| **Total project** | **81 tests passing** |
 
 ---
 
-## 10. Openstaande punten
+## 10. Open points
 
-- Het Mailing team dient de queue **`facturatie.to.mailing`** te implementeren en te monitoren.
+- The Mailing team must implement and monitor the **`facturatie.to.mailing`** queue.
+- `seen_message_ids` is currently stored in-memory and resets on service restart. Migration to persistent storage (MySQL) is planned for a later sprint.
