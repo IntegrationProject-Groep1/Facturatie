@@ -136,6 +136,19 @@ def create_registration_invoice(customer_data: dict) -> str:
     raise Exception(f"FossBilling invoice creation failed after {MAX_RETRIES} attempts: {last_error}")
 
 
+def pay_invoice(invoice_id: str, amount: str) -> bool:
+    """Marks an invoice as paid in FossBilling.
+    Returns True on success, False on any failure.
+    """
+    try:
+        _api_post("admin/invoice/pay", {"id": invoice_id, "amount": amount})
+        print(f"[FOSSBILLING] Invoice '{invoice_id}' successfully marked as paid")
+        return True
+    except Exception as e:
+        print(f"[FOSSBILLING] ERROR: Failed to mark invoice '{invoice_id}' as paid: {e}")
+        return False
+
+
 def cancel_invoice(invoice_id: str) -> bool:
     """Cancels an invoice in FossBilling by setting its status to 'cancelled'.
     Returns True on success, False on any failure.

@@ -7,6 +7,7 @@ from src.services.fossbilling_api import (
     _get_or_create_client,
     create_registration_invoice,
     update_client,
+    pay_invoice,
     MAX_RETRIES,
 )
 
@@ -245,3 +246,31 @@ def test_update_client_raises_on_api_error() -> None:
     with patch("src.services.fossbilling_api.requests.post", return_value=mock):
         with pytest.raises(Exception, match="FossBilling API error"):
             update_client(99, CUSTOMER_DATA)
+
+
+# pay_invoice tests
+
+def test_pay_invoice_returns_true_on_success() -> None:
+    """pay_invoice must return True when the API call succeeds."""
+    with patch("src.services.fossbilling_api.requests.post", return_value=mock_post_response(True)):
+        result = pay_invoice("INV-2026-001", "150.00")
+    assert result is True
+
+
+def test_pay_invoice_returns_false_on_api_error() -> None:
+    """pay_invoice must return False when the API returns an error."""
+    mock = MagicMock()
+    mock.json.return_value = {"error": {"message": "invoice not found"}}
+    mock.raise_for_status = MagicMock()
+    with patch("src.services.fossbilling_api.requests.post", return_value=mock):
+        result = pay_invoice("INV-2026-001", "150.00")
+    assert result is False
+
+
+def test_pay_invoice_sends_correct_payload() -> None:
+    """pay_invoice must send invoice_id and amount in the payload."""
+    with patch("src.services.fossbilling_api.requests.post", return_value=mock_post_response(True)) as mock_post:
+        pay_invoice("INV-2026-001", "150.00")
+    payload = mock_post.call_args.kwargs.get("data") or mock_post.call_args[1]["data"]
+    assert payload.get("id") == "INV-2026-001"
+    assert payload.get("amount") == "150.00"
