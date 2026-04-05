@@ -153,6 +153,8 @@ def extract_customer_data(root: ET.Element) -> dict:
     fee_el = root.find("body/registration_fee")
     return {
         "email": root.findtext("body/customer/email"),
+        "first_name": root.findtext("body/customer/first_name") or "",
+        "last_name": root.findtext("body/customer/last_name") or "",
         "company_name": root.findtext("body/customer/company_name") or "",
         "address": {
             field: root.findtext(f"body/customer/address/{field}") or ""

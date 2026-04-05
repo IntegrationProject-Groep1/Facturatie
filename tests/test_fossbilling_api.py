@@ -11,6 +11,8 @@ from src.services.fossbilling_api import (
 
 CUSTOMER_DATA = {
     "email": "info@bedrijf.be",
+    "first_name": "Jan",
+    "last_name": "Peeters",
     "company_name": "",
     "address": {
         "street": "Kiekenmarkt",

@@ -28,8 +28,8 @@ def _create_client(customer_data: dict) -> int:
     address = customer_data.get("address", {})
     payload = {
         "email": customer_data["email"],
-        "first_name": customer_data.get("company_name") or "Onbekend",
-        "last_name": "-",
+        "first_name": customer_data.get("first_name") or "Onbekend",
+        "last_name": customer_data.get("last_name") or "-",
         "password": f"Reg-{uuid.uuid4()}",
         "password_confirm": "",
         "address_1": f"{address.get('street', '')} {address.get('number', '')}".strip(),
