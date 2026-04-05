@@ -101,3 +101,16 @@ def create_registration_invoice(customer_data: dict) -> str:
                 time.sleep(RETRY_DELAY_SECONDS)
 
     raise Exception(f"FossBilling invoice creation failed after {MAX_RETRIES} attempts: {last_error}")
+
+
+def cancel_invoice(invoice_id: str) -> bool:
+    """Cancels an invoice in FossBilling by setting its status to 'cancelled'.
+    Returns True on success, False on any failure.
+    """
+    try:
+        _api_post("admin/invoice/update", {"id": invoice_id, "status": "cancelled"})
+        print(f"[FOSSBILLING] Invoice '{invoice_id}' successfully marked as cancelled")
+        return True
+    except Exception as e:
+        print(f"[FOSSBILLING] ERROR: Failed to cancel invoice '{invoice_id}': {e}")
+        return False
