@@ -6,6 +6,7 @@ from src.services.fossbilling_api import (
     _get_client_by_email,
     _get_or_create_client,
     create_registration_invoice,
+    update_client,
     MAX_RETRIES,
 )
 
@@ -213,3 +214,34 @@ def test_create_registration_invoice_exact_retry_count() -> None:
             with pytest.raises(Exception):
                 create_registration_invoice(CUSTOMER_DATA)
     assert mock_post.call_count == MAX_RETRIES
+
+
+# update_client tests
+
+def test_update_client_calls_api() -> None:
+    """update_client must call admin/client/update with the correct client_id."""
+    with patch("src.services.fossbilling_api.requests.post", return_value=mock_post_response(True)) as mock_post:
+        update_client(42, CUSTOMER_DATA)
+    payload = mock_post.call_args.kwargs.get("data") or mock_post.call_args[1]["data"]
+    assert payload.get("id") == 42
+    assert payload.get("email") == CUSTOMER_DATA["email"]
+    assert payload.get("first_name") == "Jan"
+    assert payload.get("last_name") == "Peeters"
+
+
+def test_update_client_includes_company_when_linked() -> None:
+    """update_client must include company in payload when company_name is set."""
+    with patch("src.services.fossbilling_api.requests.post", return_value=mock_post_response(True)) as mock_post:
+        update_client(42, CUSTOMER_DATA_COMPANY)
+    payload = mock_post.call_args.kwargs.get("data") or mock_post.call_args[1]["data"]
+    assert payload.get("company") == "Bedrijf NV"
+
+
+def test_update_client_raises_on_api_error() -> None:
+    """update_client must raise an Exception when the API returns no result."""
+    mock = MagicMock()
+    mock.json.return_value = {"error": {"message": "client not found"}}
+    mock.raise_for_status = MagicMock()
+    with patch("src.services.fossbilling_api.requests.post", return_value=mock):
+        with pytest.raises(Exception, match="FossBilling API error"):
+            update_client(99, CUSTOMER_DATA)

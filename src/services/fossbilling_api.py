@@ -63,6 +63,27 @@ def _get_or_create_client(customer_data: dict) -> int:
     return _create_client(customer_data)
 
 
+def update_client(client_id: int, customer_data: dict) -> None:
+    """Updates an existing client in FossBilling with the provided customer data.
+    Raises Exception if the API call fails.
+    """
+    address = customer_data.get("address", {})
+    payload = {
+        "id": client_id,
+        "email": customer_data["email"],
+        "first_name": customer_data.get("first_name") or "Onbekend",
+        "last_name": customer_data.get("last_name") or "-",
+        "address_1": f"{address.get('street', '')} {address.get('number', '')}".strip(),
+        "city": address.get("city", ""),
+        "postcode": address.get("postal_code", ""),
+        "country": address.get("country", "").upper(),
+    }
+    if customer_data.get("company_name"):
+        payload["company"] = customer_data["company_name"]
+    _api_post("admin/client/update", payload)
+    print(f"[FOSSBILLING] Client updated | client_id={client_id}")
+
+
 def _create_invoice(client_id: int, items: list[dict]) -> str:
     """Creates an invoice for a client in FossBilling. Returns the invoice_id.
 
