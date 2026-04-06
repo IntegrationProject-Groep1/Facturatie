@@ -4,13 +4,11 @@ import pika.spec
 from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
+
 from .fossbilling_api import create_registration_invoice
 from .rabbitmq_sender import build_invoice_request_xml, send_message
 from src.utils.xml_validator import validate_xml
-
-from src.services.rabbitmq_utils import (
-    get_connection, send_to_dlq, ISO8601_UTC_PATTERN
-)
+from src.services.rabbitmq_utils import get_connection, send_to_dlq
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
 VALID_TYPES: set[str] = {
@@ -21,8 +19,7 @@ VALID_VAT_RATES: set[str] = {"6", "12", "21"}
 VALID_PAYMENT_METHODS: set[str] = {"company_link", "on_site", "online"}
 
 # In-memory set for duplicate detection based on header/message_id
-# Note: persists only during runtime; will be migrated to MySQL in a
-# later sprint.
+# Note: persists only during runtime; will be migrated to MySQL in a later sprint.
 seen_message_ids: set[str] = set()
 
 load_dotenv()
@@ -31,6 +28,7 @@ load_dotenv()
 def is_duplicate(msg_id: str, seen_ids: set[str]) -> bool:
     """Returns True if the message_id has already been processed."""
     return msg_id in seen_ids
+
 
 def extract_customer_data(root: ET.Element) -> dict:
     """Extracts customer and registration data from a new_registration XML message."""
@@ -75,7 +73,7 @@ def process_message(
     # Step 3: validate message structure
     msg_type = root.findtext("header/type") or "unknown"
     is_valid, error_msg = validate_xml(xml_str, msg_type)
-    
+
     if not is_valid:
         print(f"[RECEIVER] ERROR: xsd_validation_failed — {error_msg}")
         send_to_dlq(channel, body, [f"ERROR: xsd_validation: {error_msg}"])
@@ -110,11 +108,18 @@ def process_message(
             correlation_id=msg_id,
             company_name=customer_data.get("company_name", ""),
         )
-        
-        send_message(invoice_request_xml, routing_key="facturatie.to.mailing", channel=channel)
-        print(f"[RECEIVER] invoice_request sent | invoice_id={invoice_id} | correlation_id={msg_id}")
 
-        # Acknowledge successful processing of new_registration
+        send_message(
+            invoice_request_xml,
+            routing_key="facturatie.to.mailing",
+            channel=channel
+        )
+
+        print(
+            f"[RECEIVER] invoice_request sent | invoice_id={invoice_id}"
+            f" | correlation_id={msg_id}"
+        )
+
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
     # Note: If adding more msg_types (like consumption_order), add an elif here
@@ -125,6 +130,7 @@ def start_receiver(queue: str | None = None) -> None:
     if queue is None:
         # Check environment variable, default to the new CRM queue name if not set
         queue = os.getenv("QUEUE_INCOMING", "crm.to.facturatie")
+
     connection = get_connection()
     channel = connection.channel()
 
@@ -133,7 +139,7 @@ def start_receiver(queue: str | None = None) -> None:
     channel.basic_consume(queue=queue, on_message_callback=process_message)
 
     print(f"[RECEIVER] Listening on queue '{queue}'... (CTRL+C to stop)")
-    # Graceful shutdown: always close the connection on exit
+
     try:
         channel.start_consuming()
     except KeyboardInterrupt:

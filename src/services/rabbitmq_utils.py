@@ -38,12 +38,14 @@ def get_connection() -> pika.BlockingConnection:
         os.getenv("RABBITMQ_USER"),
         os.getenv("RABBITMQ_PASSWORD")
     )
+
     parameters = pika.ConnectionParameters(
         host=os.getenv("RABBITMQ_HOST"),
         port=int(os.getenv("RABBITMQ_PORT", 5672)),
         virtual_host=os.getenv("RABBITMQ_VHOST", "/"),
         credentials=credentials
     )
+
     return pika.BlockingConnection(parameters)
 
 
@@ -63,6 +65,7 @@ def send_to_dlq(
         dlq_name: DLQ queue name (default will be overridden by QUEUE_DLQ env var if set)
     """
     dlq = os.getenv("QUEUE_DLQ", dlq_name)
+
     channel.queue_declare(queue=dlq, durable=True)
     channel.basic_publish(
         exchange="",
@@ -74,4 +77,5 @@ def send_to_dlq(
             headers={"errors": "; ".join(errors)},
         )
     )
+
     print(f"[DLQ] Message forwarded to DLQ. Errors: {errors}")
