@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+__all__ = ["get_connection", "send_to_dlq", "ISO8601_UTC_PATTERN"]
+
 # ISO-8601 UTC pattern: YYYY-MM-DDTHH:MM:SSZ
 ISO8601_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
