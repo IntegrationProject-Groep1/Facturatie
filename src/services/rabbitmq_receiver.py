@@ -152,3 +152,4 @@ def start_receiver(queue: str | None = None) -> None:
 
 if __name__ == "__main__":
     start_receiver()
+    
