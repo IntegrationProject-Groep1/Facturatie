@@ -34,4 +34,3 @@ def validate_xml(xml_string: str, schema_name: str):
 
     except Exception as e:
         return False, f"Systeemfout bij validatie: {str(e)}"
-    
