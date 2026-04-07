@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
 
-from .fossbilling_api import create_registration_invoice
+from .fossbilling_api import create_registration_invoice, _get_or_create_client, _create_invoice
 from .rabbitmq_sender import build_invoice_request_xml, send_message
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import get_connection, send_to_dlq
@@ -13,7 +13,7 @@ from src.services.rabbitmq_utils import get_connection, send_to_dlq
 # Valid values per XML Naming Standard (all lowercase snake_case)
 VALID_TYPES: set[str] = {
     "consumption_order", "payment_registered",
-    "heartbeat", "new_registration"
+    "heartbeat", "new_registration", "invoice_request"
 }
 VALID_VAT_RATES: set[str] = {"6", "12", "21"}
 VALID_PAYMENT_METHODS: set[str] = {"company_link", "on_site", "online"}
@@ -45,6 +45,32 @@ def extract_customer_data(root: ET.Element) -> dict:
         "registration_fee": root.findtext("body/registration_fee"),
         "fee_currency": fee_el.get("currency", "eur") if fee_el is not None else "eur",
     }
+
+
+def extract_invoice_request_data(root: ET.Element) -> dict:
+    """Extracts customer and items data from an invoice_request XML message."""
+    customer = {
+        "email": root.findtext("body/customer/email"),
+        "first_name": root.findtext("body/customer/first_name") or "",
+        "last_name": root.findtext("body/customer/last_name") or "",
+        "company_name": root.findtext("body/customer/company_name") or "",
+        "address": {
+            field: root.findtext(f"body/customer/address/{field}") or ""
+            for field in ["street", "number", "postal_code", "city", "country"]
+        },
+    }
+    items = []
+    for item_el in root.findall("body/items/item"):
+        unit_price_el = item_el.find("unit_price")
+        items.append({
+            "title": item_el.findtext("description") or "",
+            "price": item_el.findtext("unit_price") or "0",
+            "quantity": int(item_el.findtext("quantity") or 1),
+            "currency": unit_price_el.get("currency", "eur") if unit_price_el is not None else "eur",
+            "vat_rate": item_el.findtext("vat_rate") or "",
+            "sku": item_el.findtext("sku") or "",
+        })
+    return {"customer": customer, "items": items}
 
 
 def process_message(
@@ -124,8 +150,29 @@ def process_message(
 
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
-    # Note: If adding more msg_types (like consumption_order), add an elif here
-    # with its own channel.basic_ack() at the end of that block.
+    elif msg_type == "invoice_request":
+        data = extract_invoice_request_data(root)
+        try:
+            client_id = _get_or_create_client(data["customer"])
+            invoice_id = _create_invoice(client_id, data["items"])
+        except Exception as e:
+            send_to_dlq(channel, body, [f"ERROR: fossbilling_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        invoice_xml = build_invoice_request_xml(
+            invoice_id=invoice_id,
+            client_email=data["customer"]["email"],
+            correlation_id=msg_id,
+            company_name=data["customer"].get("company_name", ""),
+        )
+        send_message(invoice_xml, routing_key="facturatie.to.mailing", channel=channel)
+        print(f"[RECEIVER] invoice sent | invoice_id={invoice_id} | correlation_id={msg_id}")
+        channel.basic_ack(delivery_tag=method.delivery_tag)
+
+    else:
+        print(f"[RECEIVER] No handler for type '{msg_type}' — acknowledging")
+        channel.basic_ack(delivery_tag=method.delivery_tag)
 
 
 def start_receiver(queue: str | None = None) -> None:
