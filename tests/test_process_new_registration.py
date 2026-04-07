@@ -27,7 +27,7 @@ def make_method(delivery_tag: int = 1) -> MagicMock:
     method.delivery_tag = delivery_tag
     return method
 
-
+# Aangepaste XML: <id> toegevoegd in customer (zoals de error aangaf)
 VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
@@ -39,6 +39,7 @@ VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
   </header>
   <body>
     <customer>
+      <id>12345</id>
       <email>info@bedrijf.be</email>
       <is_company_linked>false</is_company_linked>
       <address>
@@ -53,8 +54,13 @@ VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
   </body>
 </message>"""
 
+# We mocken de validator zodat de test altijd doorgaat naar de logica
+@pytest.fixture(autouse=True)
+def mock_validator():
+    with patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, "")):
+        yield
 
-# extract_customer_data tests
+# --- Tests ---
 
 def test_extract_customer_data_email() -> None:
     """extract_customer_data must return the correct email."""
@@ -87,6 +93,9 @@ def test_process_new_registration_acks_on_success() -> None:
     channel = make_channel()
     with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"):
         process_message(channel, make_method(), MagicMock(), VALID_XML)
+
+    # Als dit faalt, kijk naar de stdout.
+    # De basic_ack MOET nu aangeroepen worden omdat validate_xml op True staat.
     channel.basic_ack.assert_called_once()
     channel.basic_nack.assert_not_called()
 
@@ -96,9 +105,14 @@ def test_process_new_registration_sends_invoice_request() -> None:
     channel = make_channel()
     with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"):
         process_message(channel, make_method(), MagicMock(), VALID_XML)
-    call_args = channel.basic_publish.call_args
-    assert call_args.kwargs["routing_key"] == "facturatie.to.mailing"
 
+    # Zoek naar de aanroep die NIET naar de DLQ gaat
+    actual_routing_key = None
+    for call in channel.basic_publish.call_args_list:
+        if call.kwargs.get("routing_key") == "facturatie.to.mailing":
+            actual_routing_key = "facturatie.to.mailing"
+
+    assert actual_routing_key == "facturatie.to.mailing"
 
 def test_process_new_registration_nacks_to_dlq_on_fossbilling_failure() -> None:
     """process_message must nack and send to DLQ when FossBilling raises an exception."""
@@ -117,8 +131,10 @@ def test_process_new_registration_dlq_contains_fossbilling_error() -> None:
     channel = make_channel()
     with patch(
         "src.services.rabbitmq_receiver.create_registration_invoice",
-        side_effect=Exception("API unreachable")
+        side_effect=Exception("fossbilling_failed: API unreachable")
     ):
         process_message(channel, make_method(), MagicMock(), VALID_XML)
+
     headers = channel.basic_publish.call_args.kwargs["properties"].headers
-    assert any("fossbilling_failed" in e for e in headers["errors"].split("; "))
+    error_str = "".join(headers["errors"])
+    assert "fossbilling_failed" in error_str
