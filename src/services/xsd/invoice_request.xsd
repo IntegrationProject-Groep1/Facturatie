@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+
+  <!-- invoice_request XSD — CRM → Facturatie -->
+
+  <xs:element name="message">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="header">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="message_id" type="xs:string"/>
+              <xs:element name="version" type="xs:string" fixed="2.0"/>
+              <xs:element name="type" type="xs:string" fixed="invoice_request"/>
+              <xs:element name="timestamp" type="xs:string"/>
+              <xs:element name="source" type="xs:string"/>
+              <xs:element name="correlation_id" type="xs:string" minOccurs="0"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+
+        <xs:element name="body">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="customer">
+                <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="email" type="xs:string"/>
+                    <xs:element name="first_name" type="xs:string" minOccurs="0"/>
+                    <xs:element name="last_name" type="xs:string" minOccurs="0"/>
+                    <xs:element name="phone" type="xs:string" minOccurs="0"/>
+                    <xs:element name="company_name" type="xs:string" minOccurs="0"/>
+                    <xs:element name="address" minOccurs="0">
+                      <xs:complexType>
+                        <xs:sequence>
+                          <xs:element name="street" type="xs:string" minOccurs="0"/>
+                          <xs:element name="number" type="xs:string" minOccurs="0"/>
+                          <xs:element name="postal_code" type="xs:string" minOccurs="0"/>
+                          <xs:element name="city" type="xs:string" minOccurs="0"/>
+                          <xs:element name="country" type="xs:string" minOccurs="0"/>
+                        </xs:sequence>
+                      </xs:complexType>
+                    </xs:element>
+                  </xs:sequence>
+                </xs:complexType>
+              </xs:element>
+
+              <xs:element name="items" minOccurs="0">
+                <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="item" maxOccurs="unbounded">
+                      <xs:complexType>
+                        <xs:sequence>
+                          <xs:element name="description" type="xs:string"/>
+                          <xs:element name="quantity" type="xs:integer"/>
+                          <xs:element name="unit_price">
+                            <xs:complexType>
+                              <xs:simpleContent>
+                                <xs:extension base="xs:string">
+                                  <xs:attribute name="currency" type="xs:string" default="eur"/>
+                                </xs:extension>
+                              </xs:simpleContent>
+                            </xs:complexType>
+                          </xs:element>
+                          <xs:element name="vat_rate" type="xs:string" minOccurs="0"/>
+                          <xs:element name="sku" type="xs:string" minOccurs="0"/>
+                        </xs:sequence>
+                      </xs:complexType>
+                    </xs:element>
+                  </xs:sequence>
+                </xs:complexType>
+              </xs:element>
+
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>
