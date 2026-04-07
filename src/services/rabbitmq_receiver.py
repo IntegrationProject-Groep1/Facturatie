@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
 
-from .fossbilling_api import create_registration_invoice, _get_or_create_client, _create_invoice
+from .fossbilling_api import create_registration_invoice
 from .rabbitmq_sender import build_invoice_request_xml, send_message
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import get_connection, send_to_dlq
@@ -153,9 +153,19 @@ def process_message(
     elif msg_type == "invoice_request":
         data = extract_invoice_request_data(root)
         try:
-            client_id = _get_or_create_client(data["customer"])
-            invoice_id = _create_invoice(client_id, data["items"])
+            # FIX: We map data from the ‘items’ list to the fields
+            # that create_registration_invoice expects.
+            customer_payload = data["customer"]
+            if data["items"]:
+                # Set the price of the first item as 'registration_fee'
+                customer_payload["registration_fee"] = data["items"][0]["price"]
+                customer_payload["fee_currency"] = data["items"][0]["currency"]
+
+            # Only call this now: the retry logic and the data structure are now working
+            invoice_id = create_registration_invoice(customer_payload)
+
         except Exception as e:
+            print(f"[RECEIVER] ERROR: fossbilling_failed: {e}")
             send_to_dlq(channel, body, [f"ERROR: fossbilling_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -199,4 +209,3 @@ def start_receiver(queue: str | None = None) -> None:
 
 if __name__ == "__main__":
     start_receiver()
-    
