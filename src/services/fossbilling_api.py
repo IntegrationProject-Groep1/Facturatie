@@ -169,4 +169,3 @@ def cancel_invoice(invoice_id: str) -> bool:
     except Exception as e:
         print(f"[FOSSBILLING] ERROR: Failed to cancel invoice '{invoice_id}': {e}")
         return False
-
