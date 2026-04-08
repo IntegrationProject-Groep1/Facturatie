@@ -268,9 +268,13 @@ def test_pay_invoice_returns_false_on_api_error() -> None:
 
 
 def test_pay_invoice_sends_correct_payload() -> None:
-    """pay_invoice must send invoice_id and amount in the payload."""
+    """pay_invoice must send invoice_id, status and paid_at in the payload."""
     with patch("src.services.fossbilling_api.requests.post", return_value=mock_post_response(True)) as mock_post:
         pay_invoice("INV-2026-001", "150.00")
-    payload = mock_post.call_args.kwargs.get("data") or mock_post.call_args[1]["data"]
+
+    args, kwargs = mock_post.call_args
+    payload = kwargs.get("data")
+
     assert payload.get("id") == "INV-2026-001"
-    assert payload.get("amount") == "150.00"
+    assert payload.get("status") == "paid"
+    assert "paid_at" in payload
