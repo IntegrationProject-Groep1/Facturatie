@@ -180,6 +180,56 @@ def process_message(
         print(f"[RECEIVER] invoice sent | invoice_id={invoice_id} | correlation_id={msg_id}")
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
+    elif msg_type == "payment_registered":
+        print("[RECEIVER] Handling payment_registered")
+
+        try:
+            # Extract invoice info
+            invoice_el = root.find("body/invoice")
+            if invoice_el is None:
+                raise ValueError("Missing <invoice> element")
+
+            invoice_id = invoice_el.findtext("id")
+            if not invoice_id:
+                raise ValueError("Missing invoice id in <invoice><id>")
+
+            amount_el = invoice_el.find("amount_paid")
+            amount = amount_el.text if amount_el is not None else None
+            currency = amount_el.get("currency", "eur") if amount_el is not None else "eur"
+
+            # Extract transaction info
+            transaction_el = root.find("body/transaction")
+            if transaction_el is None:
+                raise ValueError("Missing <transaction> element")
+
+            payment_method = transaction_el.findtext("payment_method") or ""
+            transaction_id = transaction_el.findtext("id") or ""
+
+            payment_data = {
+                "invoice_id": invoice_id,
+                "amount": amount,
+                "currency": currency,
+                "method": payment_method,
+                "transaction_id": transaction_id,
+            }
+
+            print(f"[RECEIVER] Payment data extracted: {payment_data}")
+
+            from .fossbilling_api import pay_invoice
+
+            success = pay_invoice(invoice_id, amount)
+
+            if not success:
+                raise Exception(f"Failed to register payment for invoice {invoice_id}")
+
+            print(f"[RECEIVER] Payment registered | invoice_id={invoice_id}")
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+
+        except Exception as e:
+            print(f"[RECEIVER] ERROR: payment_registered_failed: {e}")
+            send_to_dlq(channel, body, [f"ERROR: payment_registered_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
     else:
         print(f"[RECEIVER] No handler for type '{msg_type}' — acknowledging")
         channel.basic_ack(delivery_tag=method.delivery_tag)
@@ -209,3 +259,4 @@ def start_receiver(queue: str | None = None) -> None:
 
 if __name__ == "__main__":
     start_receiver()
+
