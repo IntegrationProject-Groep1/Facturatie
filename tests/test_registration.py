@@ -11,7 +11,7 @@ def send_valid_registration():
 
     # Gebruik een 'plat' ElementTree object zonder handmatige strings of indents
     root = ET.Element("message")
-    
+
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
     ET.SubElement(header, "version").text = "2.0"
@@ -22,12 +22,12 @@ def send_valid_registration():
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")
     ET.SubElement(customer, "id").text = f"CRM-{unique_suffix}"
-    
+
     # CRUCIAAL: Gebruik een simpel format zonder spaties
     ET.SubElement(customer, "email").text = f"user_{unique_suffix}@facturatie.be"
-    
+
     ET.SubElement(customer, "is_company_linked").text = "false"
-    
+
     # Adres (volgorde is belangrijk voor XSD)
     address = ET.SubElement(customer, "address")
     ET.SubElement(address, "street").text = "Kerkstraat"
@@ -41,8 +41,9 @@ def send_valid_registration():
     fee.text = "15.00"
 
     # Genereer XML zonder ET.indent() of handmatige \n na de header
+    ET.indent(root, space="    ")
     xml_str = '<?xml version="1.0" encoding="UTF-8"?>' + ET.tostring(root, encoding="unicode")
-    
+
     print(f"[TEST] Sending message with email: user_{unique_suffix}@facturatie.be")
     send_message(xml_str, routing_key="crm.to.facturatie")
 
