@@ -71,9 +71,20 @@ def process_dlq_message(
         errors_header or xml_error or "unknown",
     )
 
-    # --- Step 5: ack — drain the queue ---
+    alert_line = (
+        f"[ALERT][DLQ] queue={original_queue} | "
+        f"type={msg_type} | message_id={msg_id} | "
+        f"correlation_id={correlation_id} | "
+        f"reason={errors_header or xml_error or 'unknown'}"
+    )
+
+    logger.error(alert_line)
+    print(alert_line)
+
     channel.basic_ack(delivery_tag=method.delivery_tag)
     logger.info("[DLQ] Message acknowledged (ack)")
+
+    return alert_line
 
 
 def start_dlq_consumer(queue: str | None = None) -> None:
