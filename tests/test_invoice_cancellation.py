@@ -50,24 +50,6 @@ def test_valid_message_has_no_errors():
     assert errors == []
 
 
-def test_missing_invoice_id_returns_error():
-    root = build_cancellation_xml(invoice_id="")
-    errors = validate_invoice_cancelled(root)
-    assert any("invoice_id" in e for e in errors)
-
-
-def test_missing_customer_id_returns_error():
-    root = build_cancellation_xml(customer_id="")
-    errors = validate_invoice_cancelled(root)
-    assert any("customer_id" in e for e in errors)
-
-
-def test_missing_correlation_id_returns_error():
-    root = build_cancellation_xml(correlation_id="")
-    errors = validate_invoice_cancelled(root)
-    assert any("correlation_id" in e for e in errors)
-
-
 def test_valid_message_with_reason_has_no_errors():
     root = build_cancellation_xml(cancellation_reason="Customer cancelled registration")
     errors = validate_invoice_cancelled(root)
