@@ -28,8 +28,8 @@ def _create_client(customer_data: dict) -> int:
     address = customer_data.get("address", {})
     payload = {
         "email": customer_data["email"],
-        "first_name": customer_data.get("company_name") or "Onbekend",
-        "last_name": "-",
+        "first_name": customer_data.get("first_name") or "Unknown",
+        "last_name": customer_data.get("last_name") or "-",
         "password": f"Reg-{uuid.uuid4()}",
         "password_confirm": "",
         "address_1": f"{address.get('street', '')} {address.get('number', '')}".strip(),
@@ -63,15 +63,46 @@ def _get_or_create_client(customer_data: dict) -> int:
     return _create_client(customer_data)
 
 
-def _create_invoice(client_id: int, fee: str, currency: str) -> str:
-    """Creates a registration invoice for a client in FossBilling. Returns the invoice_id."""
+def update_client(client_id: int, customer_data: dict) -> None:
+    """Updates an existing client in FossBilling with the provided customer data.
+    Raises Exception if the API call fails.
+    """
+    address = customer_data.get("address", {})
     payload = {
-        "client_id": client_id,
-        "items[0][title]": "Inschrijvingskosten",
-        "items[0][price]": fee,
-        "items[0][quantity]": 1,
-        "items[0][unit]": currency.upper(),
+        "id": client_id,
+        "email": customer_data["email"],
+        "first_name": customer_data.get("first_name") or "Unknown",
+        "last_name": customer_data.get("last_name") or "-",
+        "address_1": f"{address.get('street', '')} {address.get('number', '')}".strip(),
+        "city": address.get("city", ""),
+        "postcode": address.get("postal_code", ""),
+        "country": address.get("country", "").upper(),
     }
+    if customer_data.get("company_name"):
+        payload["company"] = customer_data["company_name"]
+    _api_post("admin/client/update", payload)
+    print(f"[FOSSBILLING] Client updated | client_id={client_id}")
+
+
+def _create_invoice(client_id: int, items: list[dict]) -> str:
+    """Creates an invoice for a client in FossBilling. Returns the invoice_id.
+
+    Each item dict must contain:
+        title (str), price (str), quantity (int)
+    Optional fields per item:
+        currency (str), vat_rate (int|str), sku (str)
+    """
+    payload = {"client_id": client_id}
+    for i, item in enumerate(items):
+        payload[f"items[{i}][title]"] = item["title"]
+        payload[f"items[{i}][price]"] = item["price"]
+        payload[f"items[{i}][quantity]"] = item.get("quantity", 1)
+        if item.get("currency"):
+            payload[f"items[{i}][unit]"] = str(item["currency"]).upper()
+        if item.get("vat_rate"):
+            payload[f"items[{i}][taxrate]"] = item["vat_rate"]
+        if item.get("sku"):
+            payload[f"items[{i}][sku]"] = item["sku"]
     result = _api_post("admin/invoice/prepare", payload)
     return str(result["result"])
 
@@ -83,15 +114,17 @@ def create_registration_invoice(customer_data: dict) -> str:
     Returns the invoice_id on success.
     Raises Exception if all retries are exhausted.
     """
+    items = [{
+        "title": "Inschrijvingskosten",
+        "price": customer_data["registration_fee"],
+        "quantity": 1,
+        "currency": customer_data.get("fee_currency", "eur"),
+    }]
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             client_id = _get_or_create_client(customer_data)
-            invoice_id = _create_invoice(
-                client_id,
-                customer_data["registration_fee"],
-                customer_data.get("fee_currency", "eur"),
-            )
+            invoice_id = _create_invoice(client_id, items)
             print(f"[FOSSBILLING] Invoice created | invoice_id={invoice_id} | attempt={attempt}/{MAX_RETRIES}")
             return invoice_id
         except Exception as e:
@@ -101,3 +134,38 @@ def create_registration_invoice(customer_data: dict) -> str:
                 time.sleep(RETRY_DELAY_SECONDS)
 
     raise Exception(f"FossBilling invoice creation failed after {MAX_RETRIES} attempts: {last_error}")
+
+
+def pay_invoice(invoice_id: str, amount: str) -> bool:
+    """
+    Marks an invoice as paid by updating its status directly.
+    Works on all FossBilling versions.
+    """
+    try:
+        payload = {
+            "id": invoice_id,
+            "status": "paid",
+            "paid_at": int(time.time())
+        }
+
+        _api_post("admin/invoice/update", payload)
+
+        print(f"[FOSSBILLING] Invoice '{invoice_id}' marked as PAID via update()")
+        return True
+
+    except Exception as e:
+        print(f"[FOSSBILLING] ERROR: Failed to update invoice '{invoice_id}': {e}")
+        return False
+
+
+def cancel_invoice(invoice_id: str) -> bool:
+    """Cancels an invoice in FossBilling by setting its status to 'cancelled'.
+    Returns True on success, False on any failure.
+    """
+    try:
+        _api_post("admin/invoice/update", {"id": invoice_id, "status": "cancelled"})
+        print(f"[FOSSBILLING] Invoice '{invoice_id}' successfully marked as cancelled")
+        return True
+    except Exception as e:
+        print(f"[FOSSBILLING] ERROR: Failed to cancel invoice '{invoice_id}': {e}")
+        return False

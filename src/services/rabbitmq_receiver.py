@@ -4,24 +4,25 @@ import pika.spec
 from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
-from .fossbilling_api import create_registration_invoice
-from .rabbitmq_sender import build_invoice_request_xml, send_message
 
+from .fossbilling_api import create_registration_invoice, pay_invoice
+from .rabbitmq_sender import build_invoice_request_xml, build_payment_confirmed_xml, send_message
+from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
-    get_connection, send_to_dlq, ISO8601_UTC_PATTERN
+    get_connection, send_to_dlq
 )
+from src.services import fossbilling_api as fossbilling_client, crm_publisher
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
 VALID_TYPES: set[str] = {
     "consumption_order", "payment_registered",
-    "heartbeat", "new_registration"
+    "heartbeat", "new_registration", "invoice_request", "invoice_cancelled"
 }
 VALID_VAT_RATES: set[str] = {"6", "12", "21"}
 VALID_PAYMENT_METHODS: set[str] = {"company_link", "on_site", "online"}
 
 # In-memory set for duplicate detection based on header/message_id
-# Note: persists only during runtime; will be migrated to MySQL in a
-# later sprint.
+# Note: persists only during runtime; will be migrated to MySQL in a later sprint.
 seen_message_ids: set[str] = set()
 
 load_dotenv()
@@ -32,145 +33,17 @@ def is_duplicate(msg_id: str, seen_ids: set[str]) -> bool:
     return msg_id in seen_ids
 
 
-def validate_message(root: ET.Element) -> list[str]:
+def validate_invoice_cancelled(root: ET.Element) -> list[str]:
     """
-    Validates the XML message against the XML Naming Standard.
-    Returns a list of error strings. An empty list means the message is valid.
-    Duplicate detection is handled separately by is_duplicate().
+    Validates an invoice_cancelled XML message.
     """
     errors: list[str] = []
-
-    msg_id = root.findtext("header/message_id")
-    msg_type = root.findtext("header/type")
-    timestamp = root.findtext("header/timestamp")
-    source = root.findtext("header/source")
     version = root.findtext("header/version")
 
-    # Header field validation
-    if not msg_id:
-        errors.append("WARN: missing_required_field: message_id")
     if not version or version != "2.0":
         errors.append(
             f"ERROR: invalid or missing version (expected 2.0, got '{version}')"
         )
-
-    # Message type validation — must be lowercase snake_case
-    if not msg_type:
-        errors.append("ERROR: unknown_message_type: missing")
-    elif msg_type.lower() in VALID_TYPES and msg_type != msg_type.lower():
-        # Known type but wrong case
-        # (e.g. CONSUMPTION_ORDER instead of consumption_order)
-        errors.append(
-            f"ERROR: invalid_enum_case: use snake_case lowercase"
-            f" (got '{msg_type}')"
-        )
-    elif msg_type not in VALID_TYPES:
-        errors.append(f"ERROR: unknown_message_type: '{msg_type}'")
-
-    if not timestamp:
-        errors.append("WARN: missing_required_field: timestamp")
-    elif not ISO8601_UTC_PATTERN.match(timestamp):
-        errors.append(f"ERROR: invalid_iso8601_timestamp: '{timestamp}'")
-    if not source:
-        errors.append("WARN: missing_required_field: source")
-
-    # Conditional validation: consumption_order
-    if msg_type == "consumption_order":
-        is_company = root.findtext("body/customer/is_company_linked")
-        company_id = root.findtext("body/customer/company_id")
-        company_name = root.findtext("body/customer/company_name")
-
-        if is_company == "true":
-            if not company_id:
-                errors.append(
-                    "ERROR: company_id required when is_company_linked=true"
-                )
-            if not company_name:
-                errors.append(
-                    "ERROR: company_name required when is_company_linked=true"
-                )
-
-        for item in root.findall("body/items/item"):
-            vat = item.findtext("vat_rate")
-            item_id = item.findtext("id") or "unknown"
-            if vat not in VALID_VAT_RATES:
-                errors.append(
-                    f"ERROR: vat_rate must be 6, 12 or 21 for item"
-                    f" '{item_id}' (got '{vat}')"
-                )
-
-    # Conditional validation: new_registration
-    if msg_type == "new_registration":
-        email = root.findtext("body/customer/email")
-        is_company = root.findtext("body/customer/is_company_linked")
-        company_id = root.findtext("body/customer/company_id")
-        company_name = root.findtext("body/customer/company_name")
-
-        if not email:
-            errors.append("ERROR: missing_required_field: email")
-        if not is_company:
-            errors.append("ERROR: missing_required_field: is_company_linked")
-
-        if is_company == "true":
-            if not company_id:
-                errors.append(
-                    "ERROR: company_id required when is_company_linked=true"
-                )
-            if not company_name:
-                errors.append(
-                    "ERROR: company_name required when is_company_linked=true"
-                )
-
-        for field in ["street", "number", "postal_code", "city", "country"]:
-            if not root.findtext(f"body/customer/address/{field}"):
-                errors.append(
-                    f"ERROR: missing_required_field: address.{field}"
-                )
-
-        if not root.findtext("body/registration_fee"):
-            errors.append("ERROR: missing_required_field: registration_fee")
-
-    # Conditional validation: payment_registered
-    if msg_type == "payment_registered":
-        correlation_id = root.findtext("header/correlation_id")
-        if not correlation_id:
-            errors.append(
-                "ERROR: correlation_id required for payment_registered"
-            )
-
-    # Conditional validation: new_registration
-    if msg_type == "new_registration":
-        email = root.findtext("body/customer/email")
-        is_company = root.findtext("body/customer/is_company_linked")
-        if not email:
-            errors.append("ERROR: email required for new_registration")
-        if not is_company:
-            errors.append(
-                "ERROR: is_company_linked required for new_registration"
-            )
-        if is_company == "true":
-            company_id = root.findtext("body/customer/company_id")
-            company_name = root.findtext("body/customer/company_name")
-            if not company_id:
-                errors.append(
-                    "ERROR: company_id required when is_company_linked=true"
-                )
-            if not company_name:
-                errors.append(
-                    "ERROR: company_name required when is_company_linked=true"
-                )
-
-    # Conditional validation: invoice_cancelled
-    if msg_type == "invoice_cancelled":
-        invoice_id = root.findtext("body/invoice_id")
-        customer_id = root.findtext("body/customer_id")
-        if not invoice_id:
-            errors.append("ERROR: invoice_id required for invoice_cancelled")
-        if not customer_id:
-            errors.append(
-                "ERROR: customer_id required for invoice_cancelled"
-            )
-
     return errors
 
 
@@ -179,17 +52,42 @@ def extract_customer_data(root: ET.Element) -> dict:
     fee_el = root.find("body/registration_fee")
     return {
         "email": root.findtext("body/customer/email"),
+        "first_name": root.findtext("body/customer/first_name") or "",
+        "last_name": root.findtext("body/customer/last_name") or "",
         "company_name": root.findtext("body/customer/company_name") or "",
         "address": {
-            "street": root.findtext("body/customer/address/street"),
-            "number": root.findtext("body/customer/address/number"),
-            "postal_code": root.findtext("body/customer/address/postal_code"),
-            "city": root.findtext("body/customer/address/city"),
-            "country": root.findtext("body/customer/address/country"),
+            field: root.findtext(f"body/customer/address/{field}") or ""
+            for field in ["street", "number", "postal_code", "city", "country"]
         },
         "registration_fee": root.findtext("body/registration_fee"),
         "fee_currency": fee_el.get("currency", "eur") if fee_el is not None else "eur",
     }
+
+
+def extract_invoice_request_data(root: ET.Element) -> dict:
+    """Extracts customer and items data from an invoice_request XML message."""
+    customer = {
+        "email": root.findtext("body/customer/email"),
+        "first_name": root.findtext("body/customer/first_name") or "",
+        "last_name": root.findtext("body/customer/last_name") or "",
+        "company_name": root.findtext("body/customer/company_name") or "",
+        "address": {
+            field: root.findtext(f"body/customer/address/{field}") or ""
+            for field in ["street", "number", "postal_code", "city", "country"]
+        },
+    }
+    items = []
+    for item_el in root.findall("body/items/item"):
+        unit_price_el = item_el.find("unit_price")
+        items.append({
+            "title": item_el.findtext("description") or "",
+            "price": item_el.findtext("unit_price") or "0",
+            "quantity": int(item_el.findtext("quantity") or 1),
+            "currency": unit_price_el.get("currency", "eur") if unit_price_el is not None else "eur",
+            "vat_rate": item_el.findtext("vat_rate") or "",
+            "sku": item_el.findtext("sku") or "",
+        })
+    return {"customer": customer, "items": items}
 
 
 def process_message(
@@ -202,7 +100,8 @@ def process_message(
 
     # Step 1: parse XML — catch both invalid XML and bad encodings
     try:
-        root = ET.fromstring(body.decode("utf-8"))
+        xml_str = body.decode("utf-8")
+        root = ET.fromstring(xml_str)
     except (ET.ParseError, UnicodeDecodeError) as e:
         print(f"[RECEIVER] ERROR: Invalid XML or encoding — {e}")
         send_to_dlq(channel, body, [f"ERROR: invalid_xml: {e}"])
@@ -217,11 +116,12 @@ def process_message(
         return
 
     # Step 3: validate message structure
-    errors = validate_message(root)
-    if errors:
-        for error in errors:
-            print(f"[RECEIVER] {error}")
-        send_to_dlq(channel, body, errors)
+    msg_type = root.findtext("header/type") or "unknown"
+    is_valid, error_msg = validate_xml(xml_str, msg_type)
+
+    if not is_valid:
+        print(f"[RECEIVER] ERROR: xsd_validation_failed — {error_msg}")
+        send_to_dlq(channel, body, [f"ERROR: xsd_validation: {error_msg}"])
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
@@ -229,36 +129,175 @@ def process_message(
     if msg_id:
         seen_message_ids.add(msg_id)
 
-    msg_type = root.findtext("header/type")
     print(
         f"[RECEIVER] Valid message received"
         f" | type={msg_type} | message_id={msg_id}"
     )
 
+    # Process new customer registration
     if msg_type == "new_registration":
         customer_data = extract_customer_data(root)
         try:
+            # Create registration invoice in FossBilling
             invoice_id = create_registration_invoice(customer_data)
         except Exception as e:
+            # Handle failure and move to Dead Letter Queue
             send_to_dlq(channel, body, [f"ERROR: fossbilling_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
+        # Build and send XML for the Mailing Service
         invoice_request_xml = build_invoice_request_xml(
             invoice_id=invoice_id,
             client_email=customer_data["email"],
             correlation_id=msg_id,
-            company_name=customer_data["company_name"],
+            company_name=customer_data.get("company_name", ""),
         )
-        send_message(invoice_request_xml, routing_key="facturatie.to.mailing", channel=channel)
-        print(f"[RECEIVER] invoice_request sent | invoice_id={invoice_id} | correlation_id={msg_id}")
 
-    channel.basic_ack(delivery_tag=method.delivery_tag)
+        send_message(
+            invoice_request_xml,
+            routing_key="facturatie.to.mailing",
+            channel=channel
+        )
+
+        print(
+            f"[RECEIVER] invoice_request sent | invoice_id={invoice_id}"
+            f" | correlation_id={msg_id}"
+        )
+
+        channel.basic_ack(delivery_tag=method.delivery_tag)
+
+    elif msg_type == "invoice_request":
+        data = extract_invoice_request_data(root)
+        try:
+            # FIX: We map data from the ‘items’ list to the fields
+            # that create_registration_invoice expects.
+            customer_payload = data["customer"]
+            if data["items"]:
+                # Set the price of the first item as 'registration_fee'
+                customer_payload["registration_fee"] = data["items"][0]["price"]
+                customer_payload["fee_currency"] = data["items"][0]["currency"]
+
+            # Only call this now: the retry logic and the data structure are now working
+            invoice_id = create_registration_invoice(customer_payload)
+
+        except Exception as e:
+            print(f"[RECEIVER] ERROR: fossbilling_failed: {e}")
+            send_to_dlq(channel, body, [f"ERROR: fossbilling_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        invoice_xml = build_invoice_request_xml(
+            invoice_id=invoice_id,
+            client_email=data["customer"]["email"],
+            correlation_id=msg_id,
+            company_name=data["customer"].get("company_name", ""),
+        )
+        send_message(invoice_xml, routing_key="facturatie.to.mailing", channel=channel)
+        print(f"[RECEIVER] invoice sent | invoice_id={invoice_id} | correlation_id={msg_id}")
+        channel.basic_ack(delivery_tag=method.delivery_tag)
+
+    elif msg_type == "payment_registered":
+        print("[RECEIVER] Handling payment_registered")
+
+        try:
+            # Extract invoice info
+            invoice_el = root.find("body/invoice")
+            if invoice_el is None:
+                raise ValueError("Missing <invoice> element")
+
+            invoice_id = invoice_el.findtext("id")
+            due_date = invoice_el.findtext("due_date") or ""
+            if not invoice_id:
+                raise ValueError("Missing invoice id in <invoice><id>")
+
+            amount_el = invoice_el.find("amount_paid")
+            amount = amount_el.text if amount_el is not None else None
+            currency = amount_el.get("currency", "eur") if amount_el is not None else "eur"
+
+            # Extract transaction info
+            transaction_el = root.find("body/transaction")
+            if transaction_el is None:
+                raise ValueError("Missing <transaction> element")
+
+            payment_method = transaction_el.findtext("payment_method") or ""
+            transaction_id = transaction_el.findtext("id") or ""
+
+            print(
+                f"[RECEIVER] Payment data extracted"
+                f" | invoice_id={invoice_id} | amount={amount} {currency}"
+                f" | method={payment_method} | transaction_id={transaction_id}"
+            )
+
+            success = pay_invoice(invoice_id, amount)
+            if not success:
+                raise Exception(f"Failed to register payment for invoice '{invoice_id}'")
+
+            print(f"[RECEIVER] Payment registered in FossBilling | invoice_id={invoice_id}")
+
+            # Step 5: publish payment_registered confirmation to RabbitMQ
+            confirmation_xml = build_payment_confirmed_xml(
+                invoice_id=invoice_id,
+                amount=amount,
+                currency=currency,
+                payment_method=payment_method,
+                transaction_id=transaction_id,
+                correlation_id=msg_id,
+                due_date=due_date
+            )
+            send_message(
+                confirmation_xml,
+                routing_key="facturatie.to.crm",
+                channel=channel,
+            )
+            print(
+                f"[RECEIVER] payment_registered confirmation sent"
+                f" | invoice_id={invoice_id} | correlation_id={msg_id}"
+            )
+
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+
+        except Exception as e:
+            print(f"[RECEIVER] ERROR: payment_registered_failed: {e}")
+            send_to_dlq(channel, body, [f"ERROR: payment_registered_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+    elif msg_type == "invoice_cancelled":
+        print(f"[RECEIVER][{msg_type}] Handling cancellation")
+
+        errors = validate_invoice_cancelled(root)
+        if errors:
+            send_to_dlq(channel, body, errors)
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        invoice_id = root.findtext("body/invoice/id")
+        customer_id = root.findtext("body/customer/id")
+        correlation_id = root.findtext("header/correlation_id")
+
+        print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
+
+        success = fossbilling_client.cancel_invoice(invoice_id)
+        if not success:
+            error_msg = f"ERROR: FossBilling failed to cancel invoice '{invoice_id}'"
+            send_to_dlq(channel, body, [error_msg])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
+        print(f"[RECEIVER][{msg_type}] Flow complete for invoice '{invoice_id}'")
+        channel.basic_ack(delivery_tag=method.delivery_tag)
+
+    else:
+        print(f"[RECEIVER] No handler for type '{msg_type}' — acknowledging")
+        channel.basic_ack(delivery_tag=method.delivery_tag)
 
 
 def start_receiver(queue: str | None = None) -> None:
     if queue is None:
-        queue = os.getenv("QUEUE_INCOMING", "facturatie.incoming")
+        # Check environment variable, default to the new CRM queue name if not set
+        queue = os.getenv("QUEUE_INCOMING", "crm.to.facturatie")
+
     connection = get_connection()
     channel = connection.channel()
 
@@ -267,7 +306,7 @@ def start_receiver(queue: str | None = None) -> None:
     channel.basic_consume(queue=queue, on_message_callback=process_message)
 
     print(f"[RECEIVER] Listening on queue '{queue}'... (CTRL+C to stop)")
-    # Graceful shutdown: always close the connection on exit
+
     try:
         channel.start_consuming()
     except KeyboardInterrupt:

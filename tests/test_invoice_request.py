@@ -13,9 +13,9 @@ def parse(xml_str: str) -> ET.Element:
 
 
 def test_invoice_request_type() -> None:
-    """type must be invoice_request."""
+    """type must be invoice."""
     root = parse(build_invoice_request_xml(INVOICE_ID, CLIENT_EMAIL, CORRELATION_ID))
-    assert root.findtext("header/type") == "invoice_request"
+    assert root.findtext("header/type") == "invoice"
 
 
 def test_invoice_request_version() -> None:

@@ -15,4 +15,4 @@ USER appuser
 
 EXPOSE 30010
 
-CMD ["python", "src/main.py"]
+CMD ["python", "-m", "src.main"]

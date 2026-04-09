@@ -18,3 +18,5 @@ python-dotenv==1.2.2
 requests==2.33.0
 urllib3==2.6.3
 Werkzeug==3.1.7
+lxml
+defusedxml==0.7.1

@@ -115,7 +115,7 @@ def build_invoice_request_xml(
     source: str = "facturatie",
 ) -> str:
     """
-    Builds an invoice_request XML message to be sent to the Mailing team.
+    Builds an invoice XML message to be sent to the Mailing team.
     correlation_id must reference the message_id of the original new_registration message.
     company_name is optional — only include when the client is a company.
     """
@@ -127,7 +127,7 @@ def build_invoice_request_xml(
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
     ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "invoice_request"
+    ET.SubElement(header, "type").text = "invoice"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
     ET.SubElement(header, "correlation_id").text = correlation_id
@@ -142,11 +142,60 @@ def build_invoice_request_xml(
     return f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
 
 
+def build_payment_confirmed_xml(
+    invoice_id: str,
+    amount: str,
+    currency: str,
+    payment_method: str,
+    transaction_id: str,
+    correlation_id: str,
+    due_date: str,
+    source: str = "facturatie",
+) -> str:
+    """
+    Builds a payment_registered confirmation XML message to be published
+    on RabbitMQ after a successful payment has been processed in FossBilling.
+    correlation_id must reference the message_id of the original
+    payment_registered message received from the Kassa.
+    """
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "version").text = "2.0"
+    ET.SubElement(header, "type").text = "payment_registered"
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    invoice_el = ET.SubElement(body, "invoice")
+    ET.SubElement(invoice_el, "id").text = invoice_id
+    ET.SubElement(invoice_el, "status").text = "paid"
+    amount_el = ET.SubElement(invoice_el, "amount_paid")
+    amount_el.text = amount
+    amount_el.set("currency", currency.lower())
+    ET.SubElement(invoice_el, "due_date").text = due_date
+
+    transaction_el = ET.SubElement(body, "transaction")
+    ET.SubElement(transaction_el, "id").text = transaction_id
+    ET.SubElement(transaction_el, "payment_method").text = payment_method
+
+    ET.indent(root, space="    ")
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
+
+
 def send_error_to_monitor(error_message: str) -> None:
     """
     Sends an error notification to the central error queue (errors.facturatie).
     Call this when a critical failure occurs (e.g. database offline, API
-    failure). Conform sectie 7 van de Sidecar Architectuur.
+    failure). Per section 7 of the Sidecar Architecture.
     """
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -177,7 +226,7 @@ if __name__ == "__main__":
         items=items,
         is_company_linked=True,
         company_id="FOSS-CUST-102",
-        company_name="Bedrijf NV",
+        company_name="Example NV",
     )
     print("[SENDER] XML:\n", xml)
     send_message(xml)
