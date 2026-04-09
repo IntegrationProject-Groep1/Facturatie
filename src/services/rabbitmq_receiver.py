@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
 
-from .fossbilling_api import create_registration_invoice
-from .rabbitmq_sender import build_invoice_request_xml, send_message
+from .fossbilling_api import create_registration_invoice, pay_invoice
+from .rabbitmq_sender import build_invoice_request_xml, build_payment_confirmed_xml, send_message
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq
@@ -207,6 +207,7 @@ def process_message(
                 raise ValueError("Missing <invoice> element")
 
             invoice_id = invoice_el.findtext("id")
+            due_date = invoice_el.findtext("due_date") or ""
             if not invoice_id:
                 raise ValueError("Missing invoice id in <invoice><id>")
 
@@ -222,24 +223,38 @@ def process_message(
             payment_method = transaction_el.findtext("payment_method") or ""
             transaction_id = transaction_el.findtext("id") or ""
 
-            payment_data = {
-                "invoice_id": invoice_id,
-                "amount": amount,
-                "currency": currency,
-                "method": payment_method,
-                "transaction_id": transaction_id,
-            }
-
-            print(f"[RECEIVER] Payment data extracted: {payment_data}")
-
-            from .fossbilling_api import pay_invoice
+            print(
+                f"[RECEIVER] Payment data extracted"
+                f" | invoice_id={invoice_id} | amount={amount} {currency}"
+                f" | method={payment_method} | transaction_id={transaction_id}"
+            )
 
             success = pay_invoice(invoice_id, amount)
-
             if not success:
-                raise Exception(f"Failed to register payment for invoice {invoice_id}")
+                raise Exception(f"Failed to register payment for invoice '{invoice_id}'")
 
-            print(f"[RECEIVER] Payment registered | invoice_id={invoice_id}")
+            print(f"[RECEIVER] Payment registered in FossBilling | invoice_id={invoice_id}")
+
+            # Step 5: publish payment_registered confirmation to RabbitMQ
+            confirmation_xml = build_payment_confirmed_xml(
+                invoice_id=invoice_id,
+                amount=amount,
+                currency=currency,
+                payment_method=payment_method,
+                transaction_id=transaction_id,
+                correlation_id=msg_id,
+                due_date=due_date
+            )
+            send_message(
+                confirmation_xml,
+                routing_key="facturatie.to.crm",
+                channel=channel,
+            )
+            print(
+                f"[RECEIVER] payment_registered confirmation sent"
+                f" | invoice_id={invoice_id} | correlation_id={msg_id}"
+            )
+
             channel.basic_ack(delivery_tag=method.delivery_tag)
 
         except Exception as e:
