@@ -146,7 +146,7 @@ def send_error_to_monitor(error_message: str) -> None:
     """
     Sends an error notification to the central error queue (errors.facturatie).
     Call this when a critical failure occurs (e.g. database offline, API
-    failure). Conform sectie 7 van de Sidecar Architectuur.
+    failure). Per section 7 of the Sidecar Architecture.
     """
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -177,7 +177,7 @@ if __name__ == "__main__":
         items=items,
         is_company_linked=True,
         company_id="FOSS-CUST-102",
-        company_name="Bedrijf NV",
+        company_name="Example NV",
     )
     print("[SENDER] XML:\n", xml)
     send_message(xml)

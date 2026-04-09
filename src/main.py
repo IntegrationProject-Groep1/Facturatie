@@ -4,19 +4,19 @@ from services.rabbitmq_receiver import start_receiver
 
 
 def main():
-    print("Facturatie Integration Service is gestart.", flush=True)
+    print("Facturatie Integration Service started.", flush=True)
 
     receiver_thread = threading.Thread(
         target=start_receiver,
         daemon=True
     )
     receiver_thread.start()
-    print("Receiver gestart; luistert naar berichten...", flush=True)
+    print("Receiver started; listening for messages...", flush=True)
 
     try:
         receiver_thread.join()
     except KeyboardInterrupt:
-        print("\nService wordt afgesloten...")
+        print("\nService shutting down...")
         sys.exit(0)
 
 

@@ -27,7 +27,8 @@ def make_method(delivery_tag: int = 1) -> MagicMock:
     method.delivery_tag = delivery_tag
     return method
 
-# Aangepaste XML: <id> toegevoegd in customer (zoals de error aangaf)
+
+# Updated XML: <id> added in customer element (as required by XSD)
 VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
@@ -54,13 +55,15 @@ VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
   </body>
 </message>"""
 
-# We mocken de validator zodat de test altijd doorgaat naar de logica
+
+# Mock the validator so tests always proceed to the processing logic
 @pytest.fixture(autouse=True)
 def mock_validator():
     with patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, "")):
         yield
 
 # --- Tests ---
+
 
 def test_extract_customer_data_email() -> None:
     """extract_customer_data must return the correct email."""
@@ -94,8 +97,8 @@ def test_process_new_registration_acks_on_success() -> None:
     with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"):
         process_message(channel, make_method(), MagicMock(), VALID_XML)
 
-    # Als dit faalt, kijk naar de stdout.
-    # De basic_ack MOET nu aangeroepen worden omdat validate_xml op True staat.
+    # If this fails, check stdout.
+    # basic_ack must be called because validate_xml is mocked to return True.
     channel.basic_ack.assert_called_once()
     channel.basic_nack.assert_not_called()
 
@@ -106,13 +109,14 @@ def test_process_new_registration_sends_invoice_request() -> None:
     with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"):
         process_message(channel, make_method(), MagicMock(), VALID_XML)
 
-    # Zoek naar de aanroep die NIET naar de DLQ gaat
+    # Find the call that does NOT go to the DLQ
     actual_routing_key = None
     for call in channel.basic_publish.call_args_list:
         if call.kwargs.get("routing_key") == "facturatie.to.mailing":
             actual_routing_key = "facturatie.to.mailing"
 
     assert actual_routing_key == "facturatie.to.mailing"
+
 
 def test_process_new_registration_nacks_to_dlq_on_fossbilling_failure() -> None:
     """process_message must nack and send to DLQ when FossBilling raises an exception."""

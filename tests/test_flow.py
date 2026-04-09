@@ -8,13 +8,14 @@ import pytest
 
 load_dotenv()
 
+
 # Only define functions, don't execute code at module level
 def get_auth_method():
     """Test which auth method works"""
     url = f"{os.getenv('BILLING_API_URL')}/admin/client/get_list"
     username = os.getenv("BILLING_API_USERNAME")
     token = os.getenv("BILLING_API_TOKEN")
-    
+
     methods = [
         ("Basic Auth (email + token)",
          lambda: requests.post(url, auth=(username, token), data={}, timeout=10, verify=False)),
@@ -25,7 +26,7 @@ def get_auth_method():
         ("access_token in URL",
          lambda: requests.post(f"{url}?access_token={token}", data={}, timeout=10, verify=False)),
     ]
-    
+
     for name, method in methods:
         try:
             r = method()
@@ -36,12 +37,14 @@ def get_auth_method():
             print(f"[TEST] {name} failed: {e}")
     return None
 
+
 @pytest.mark.integration
 def test_auth_methods():
     """Test FossBilling authentication"""
     working_method = get_auth_method()
     assert working_method is not None, "No authentication method worked"
-    print(f"\n[TEST] Werkende methode: {working_method}")
+    print(f"\n[TEST] Working method: {working_method}")
+
 
 @pytest.mark.integration
 def test_client_create():
@@ -49,10 +52,10 @@ def test_client_create():
     working_method = get_auth_method()
     if not working_method:
         pytest.skip("Authentication failed")
-    
+
     username = os.getenv("BILLING_API_USERNAME")
     token = os.getenv("BILLING_API_TOKEN")
-    
+
     r2 = requests.post(
         f"{os.getenv('BILLING_API_URL')}/admin/client/create",
         auth=(username, token),
@@ -67,13 +70,14 @@ def test_client_create():
     )
     assert r2.status_code == 200, f"Got {r2.status_code}: {r2.text[:300]}"
 
+
 @pytest.mark.integration
 def test_new_registration_message():
     """Test sending new_registration message"""
     working_method = get_auth_method()
     if not working_method:
         pytest.skip("Authentication failed")
-    
+
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
