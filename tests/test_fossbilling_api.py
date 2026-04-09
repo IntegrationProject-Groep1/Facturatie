@@ -62,12 +62,8 @@ def test_create_client_includes_company_when_linked() -> None:
     """_create_client must include company in payload when company_name is set."""
     with patch("src.services.fossbilling_api.requests.post", return_value=mock_post_response(1)) as mock_post:
         _create_client(CUSTOMER_DATA_COMPANY)
-    payload = (
-        mock_post.call_args.kwargs.get("data")
-        or mock_post.call_args.args[1]
-        if mock_post.call_args.args
-        else mock_post.call_args[1]["data"]
-    )
+        _, kwargs = mock_post.call_args
+        payload = kwargs.get("data")
     assert payload.get("company") == "Bedrijf NV"
 
 
