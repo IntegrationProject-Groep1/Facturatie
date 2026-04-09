@@ -142,6 +142,53 @@ def build_invoice_request_xml(
     return f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
 
 
+def build_payment_confirmed_xml(
+    invoice_id: str,
+    amount: str,
+    currency: str,
+    payment_method: str,
+    transaction_id: str,
+    correlation_id: str,
+    source: str = "facturatie",
+) -> str:
+    """
+    Builds a payment_registered confirmation XML message to be published
+    on RabbitMQ after a successful payment has been processed in FossBilling.
+    correlation_id must reference the message_id of the original
+    payment_registered message received from the Kassa.
+    """
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "version").text = "2.0"
+    ET.SubElement(header, "type").text = "payment_registered"
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    invoice_el = ET.SubElement(body, "invoice")
+    ET.SubElement(invoice_el, "id").text = invoice_id
+    ET.SubElement(invoice_el, "status").text = "paid"
+    amount_el = ET.SubElement(invoice_el, "amount_paid")
+    amount_el.text = amount
+    amount_el.set("currency", currency.lower())
+
+    transaction_el = ET.SubElement(body, "transaction")
+    ET.SubElement(transaction_el, "id").text = transaction_id
+    ET.SubElement(transaction_el, "payment_method").text = payment_method
+
+    ET.indent(root, space="    ")
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
+
+
 def send_error_to_monitor(error_message: str) -> None:
     """
     Sends an error notification to the central error queue (errors.facturatie).
