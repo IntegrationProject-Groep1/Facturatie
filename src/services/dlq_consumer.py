@@ -1,3 +1,4 @@
+import logging
 import os
 import xml.etree.ElementTree as ET
 
@@ -10,6 +11,8 @@ from src.services.rabbitmq_utils import get_connection
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 
 def process_dlq_message(
     channel: pika.channel.Channel,
@@ -17,7 +20,7 @@ def process_dlq_message(
     properties: pika.spec.BasicProperties,
     body: bytes,
 ) -> None:
-    print("\n[DLQ] Dead-letter message received")
+    logger.info("[DLQ] Dead-letter message received")
 
     # --- Step 2: read x-death / errors metadata ---
     headers = properties.headers or {}
@@ -49,31 +52,36 @@ def process_dlq_message(
         xml_error = str(e)
 
     # --- Step 3: log ---
-    print(f"[DLQ] message_type     : {msg_type}")
-    print(f"[DLQ] message_id       : {msg_id}")
-    print(f"[DLQ] correlation_id   : {correlation_id}")
-    print(f"[DLQ] original_queue   : {original_queue}")
+    logger.info("[DLQ] message_type     : %s", msg_type)
+    logger.info("[DLQ] message_id       : %s", msg_id)
+    logger.info("[DLQ] correlation_id   : %s", correlation_id)
+    logger.info("[DLQ] original_queue   : %s", original_queue)
 
     if xml_error:
-        print(f"[DLQ] xml_parse_error  : {xml_error}")
+        logger.warning("[DLQ] xml_parse_error  : %s", xml_error)
     if errors_header:
-        print(f"[DLQ] rejection_errors : {errors_header}")
+        logger.warning("[DLQ] rejection_errors : %s", errors_header)
 
     # --- Step 4: alert monitoring ---
-    print(
-        f"[ALERT][DLQ] Unprocessed message"
-        f" | queue={original_queue}"
-        f" | type={msg_type}"
-        f" | message_id={msg_id}"
-        f" | reason={errors_header or xml_error or 'unknown'}"
+    logger.error(
+        "[ALERT][DLQ] Unprocessed message | queue=%s | type=%s | message_id=%s | reason=%s",
+        original_queue,
+        msg_type,
+        msg_id,
+        errors_header or xml_error or "unknown",
     )
 
     # --- Step 5: ack — drain the queue ---
     channel.basic_ack(delivery_tag=method.delivery_tag)
-    print("[DLQ] Message acknowledged (ack)")
+    logger.info("[DLQ] Message acknowledged (ack)")
 
 
 def start_dlq_consumer(queue: str | None = None) -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+
     if queue is None:
         queue = os.getenv("QUEUE_DLQ", "facturatie.dlq")
 
@@ -84,12 +92,12 @@ def start_dlq_consumer(queue: str | None = None) -> None:
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=process_dlq_message)
 
-    print(f"[DLQ] Listening on queue '{queue}'... (CTRL+C to stop)")
+    logger.info("[DLQ] Listening on queue '%s'... (CTRL+C to stop)", queue)
 
     try:
         channel.start_consuming()
     except KeyboardInterrupt:
-        print("\n[DLQ] Consumer stopped.")
+        logger.info("[DLQ] Consumer stopped.")
     finally:
         connection.close()
 
