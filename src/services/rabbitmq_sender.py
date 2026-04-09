@@ -149,6 +149,7 @@ def build_payment_confirmed_xml(
     payment_method: str,
     transaction_id: str,
     correlation_id: str,
+    due_date: str,
     source: str = "facturatie",
 ) -> str:
     """
@@ -177,6 +178,7 @@ def build_payment_confirmed_xml(
     amount_el = ET.SubElement(invoice_el, "amount_paid")
     amount_el.text = amount
     amount_el.set("currency", currency.lower())
+    ET.SubElement(invoice_el, "due_date").text = due_date
 
     transaction_el = ET.SubElement(body, "transaction")
     ET.SubElement(transaction_el, "id").text = transaction_id

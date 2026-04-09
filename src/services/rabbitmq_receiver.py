@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
 
-from .fossbilling_api import create_registration_invoice
+from .fossbilling_api import create_registration_invoice, pay_invoice
 from .rabbitmq_sender import build_invoice_request_xml, build_payment_confirmed_xml, send_message
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
@@ -207,6 +207,7 @@ def process_message(
                 raise ValueError("Missing <invoice> element")
 
             invoice_id = invoice_el.findtext("id")
+            due_date = invoice_el.findtext("due_date") or ""
             if not invoice_id:
                 raise ValueError("Missing invoice id in <invoice><id>")
 
@@ -228,16 +229,13 @@ def process_message(
                 f" | method={payment_method} | transaction_id={transaction_id}"
             )
 
-            # Step 5a: mark invoice as paid in FossBilling
-            from .fossbilling_api import pay_invoice
-
             success = pay_invoice(invoice_id, amount)
             if not success:
                 raise Exception(f"Failed to register payment for invoice '{invoice_id}'")
 
             print(f"[RECEIVER] Payment registered in FossBilling | invoice_id={invoice_id}")
 
-            # Step 5b: publish payment_registered confirmation to RabbitMQ
+            # Step 5: publish payment_registered confirmation to RabbitMQ
             confirmation_xml = build_payment_confirmed_xml(
                 invoice_id=invoice_id,
                 amount=amount,
@@ -245,6 +243,7 @@ def process_message(
                 payment_method=payment_method,
                 transaction_id=transaction_id,
                 correlation_id=msg_id,
+                due_date=due_date
             )
             send_message(
                 confirmation_xml,
