@@ -65,7 +65,7 @@ Creates a new client in FossBilling.
 | Field | Required | Description |
 |---|---|---|
 | `email` | Yes | Email address |
-| `first_name` | No | First name (default: `"Onbekend"`) |
+| `first_name` | No | First name (default: `"Unknown"`) |
 | `last_name` | No | Last name (default: `"-"`) |
 | `company_name` | No | Company name — included as `company` if provided |
 | `fee_currency` | No | Currency (default: `"eur"`) |

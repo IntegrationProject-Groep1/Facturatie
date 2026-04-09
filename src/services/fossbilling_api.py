@@ -28,7 +28,7 @@ def _create_client(customer_data: dict) -> int:
     address = customer_data.get("address", {})
     payload = {
         "email": customer_data["email"],
-        "first_name": customer_data.get("first_name") or "Onbekend",
+        "first_name": customer_data.get("first_name") or "Unknown",
         "last_name": customer_data.get("last_name") or "-",
         "password": f"Reg-{uuid.uuid4()}",
         "password_confirm": "",
@@ -71,7 +71,7 @@ def update_client(client_id: int, customer_data: dict) -> None:
     payload = {
         "id": client_id,
         "email": customer_data["email"],
-        "first_name": customer_data.get("first_name") or "Onbekend",
+        "first_name": customer_data.get("first_name") or "Unknown",
         "last_name": customer_data.get("last_name") or "-",
         "address_1": f"{address.get('street', '')} {address.get('number', '')}".strip(),
         "city": address.get("city", ""),

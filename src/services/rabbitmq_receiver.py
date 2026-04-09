@@ -8,12 +8,15 @@ import xml.etree.ElementTree as ET
 from .fossbilling_api import create_registration_invoice
 from .rabbitmq_sender import build_invoice_request_xml, build_payment_confirmed_xml, send_message
 from src.utils.xml_validator import validate_xml
-from src.services.rabbitmq_utils import get_connection, send_to_dlq
+from src.services.rabbitmq_utils import (
+    get_connection, send_to_dlq
+)
+from src.services import fossbilling_api as fossbilling_client, crm_publisher
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
 VALID_TYPES: set[str] = {
     "consumption_order", "payment_registered",
-    "heartbeat", "new_registration", "invoice_request"
+    "heartbeat", "new_registration", "invoice_request", "invoice_cancelled"
 }
 VALID_VAT_RATES: set[str] = {"6", "12", "21"}
 VALID_PAYMENT_METHODS: set[str] = {"company_link", "on_site", "online"}
@@ -28,6 +31,20 @@ load_dotenv()
 def is_duplicate(msg_id: str, seen_ids: set[str]) -> bool:
     """Returns True if the message_id has already been processed."""
     return msg_id in seen_ids
+
+
+def validate_invoice_cancelled(root: ET.Element) -> list[str]:
+    """
+    Validates an invoice_cancelled XML message.
+    """
+    errors: list[str] = []
+    version = root.findtext("header/version")
+
+    if not version or version != "2.0":
+        errors.append(
+            f"ERROR: invalid or missing version (expected 2.0, got '{version}')"
+        )
+    return errors
 
 
 def extract_customer_data(root: ET.Element) -> dict:
@@ -245,6 +262,32 @@ def process_message(
             print(f"[RECEIVER] ERROR: payment_registered_failed: {e}")
             send_to_dlq(channel, body, [f"ERROR: payment_registered_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+    elif msg_type == "invoice_cancelled":
+        print(f"[RECEIVER][{msg_type}] Handling cancellation")
+
+        errors = validate_invoice_cancelled(root)
+        if errors:
+            send_to_dlq(channel, body, errors)
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        invoice_id = root.findtext("body/invoice/id")
+        customer_id = root.findtext("body/customer/id")
+        correlation_id = root.findtext("header/correlation_id")
+
+        print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
+
+        success = fossbilling_client.cancel_invoice(invoice_id)
+        if not success:
+            error_msg = f"ERROR: FossBilling failed to cancel invoice '{invoice_id}'"
+            send_to_dlq(channel, body, [error_msg])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
+        print(f"[RECEIVER][{msg_type}] Flow complete for invoice '{invoice_id}'")
+        channel.basic_ack(delivery_tag=method.delivery_tag)
 
     else:
         print(f"[RECEIVER] No handler for type '{msg_type}' — acknowledging")
