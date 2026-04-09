@@ -11,7 +11,7 @@ def get_xsd_validator(name: str):
         path = os.path.join(os.getcwd(), "src", "services", "xsd", f"{name}.xsd")
 
         if not os.path.exists(path):
-            raise FileNotFoundError(f"XSD bestand niet gevonden: {path}")
+            raise FileNotFoundError(f"XSD file not found: {path}")
 
         with open(path, "rb") as f:
             schema_doc = etree.XML(f.read())
@@ -33,4 +33,4 @@ def validate_xml(xml_string: str, schema_name: str):
         return False, str(e)
 
     except Exception as e:
-        return False, f"Systeemfout bij validatie: {str(e)}"
+        return False, f"System error during validation: {str(e)}"

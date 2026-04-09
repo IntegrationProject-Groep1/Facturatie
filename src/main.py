@@ -6,11 +6,11 @@ from src.services.dlq_consumer import start_dlq_consumer
 
 
 def main():
-    print("Facturatie Integration Service is gestart.", flush=True)
+    print("Facturatie Integration Service started.", flush=True)
 
     receiver_thread = threading.Thread(target=start_receiver, daemon=True)
     receiver_thread.start()
-    print("Receiver gestart; luistert naar berichten...", flush=True)
+    print("Receiver started; listening for messages...", flush=True)
 
     dlq_thread = threading.Thread(target=start_dlq_consumer, daemon=True)
     dlq_thread.start()
@@ -26,7 +26,7 @@ def main():
                 sys.exit(1)
             time.sleep(5)
     except KeyboardInterrupt:
-        print("\nService wordt afgesloten...")
+        print("\nService shutting down...")
         sys.exit(0)
 
 

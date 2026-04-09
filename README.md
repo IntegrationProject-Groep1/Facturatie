@@ -1,59 +1,59 @@
 # Team Facturatie
 
-### Over het team
+### About the team
 
-Wij zijn het Facturatie‑team binnen het Integration Project. Onze verantwoordelijkheid is het automatisch verwerken, genereren en beheren van facturen. Wij zorgen ervoor dat inschrijvingen, consumpties, betalingen en annuleringen correct worden verwerkt in FossBilling, het facturatiesysteem van het project. Ons team staat centraal in de financiële afhandeling van het event: wij zorgen dat bedrijven en deelnemers correcte, tijdige en overzichtelijke facturen ontvangen.
+We are the Facturatie (Invoicing) team within the Integration Project. Our responsibility is to automatically process, generate, and manage invoices. We ensure that registrations, consumptions, payments, and cancellations are correctly handled in FossBilling, the invoicing system of the project. Our team is central to the financial processing of the event: we make sure that companies and participants receive correct, timely, and clear invoices.
 
-### Wat ons systeem doet
+### What our system does
 
-Ons systeem luistert naar berichten die CRM doorstuurt via RabbitMQ. Op basis van deze berichten voeren wij de volgende taken uit:
+Our system listens to messages forwarded by CRM via RabbitMQ. Based on these messages, we perform the following tasks:
 
-**1. Verwerken van inschrijvingen**
+**1. Processing registrations**
 
-Wanneer CRM een inschrijving doorstuurt, maken wij automatisch:
-- een factuur voor bedrijven
-- een bevestiging naar Mailing
-  
-**2. Verwerken van consumpties**
+When CRM forwards a registration, we automatically create:
+- an invoice for companies
+- a confirmation to the Mailing team
 
-CRM stuurt consumptie‑informatie door die afkomstig is van de kassa.
-Wij voegen deze items toe aan de openstaande factuur van het bedrijf.
+**2. Processing consumptions**
 
-**3. Verwerken van betalingen**
+CRM forwards consumption information originating from the point of sale.
+We add these items to the open invoice of the company.
 
-Wanneer CRM meldt dat een inschrijving aan de kassa is betaald:
-- zetten wij de factuurstatus op betaald
-- sturen wij een bevestiging naar Mailingµ
-  
-**4. Verwerken van annuleringen**
+**3. Processing payments**
 
-Bij annuleringen maken wij automatisch een creditnota aan.
+When CRM reports that a registration has been paid at the point of sale:
+- we set the invoice status to paid
+- we send a confirmation to the Mailing team
 
-**5. Automatische facturatie na het event**
+**4. Processing cancellations**
 
-Wanneer het event is afgelopen:
-- sluiten wij alle openstaande facturen
-- sturen wij ze door naar Mailing
-- bedrijven ontvangen hun volledige factuur (inschrijvingen + consumpties)
+For cancellations, we automatically create a credit note.
 
-**6. Monitoring & betrouwbaarheid**
+**5. Automatic invoicing after the event**
 
-Ons systeem stuurt:
-- heartbeats 
-- error logs naar de DLQ bij foutieve berichten
-- meldingen wanneer het facturatiesysteem uitvalt
-  
-### Foutafhandeling
+When the event is over:
+- we close all open invoices
+- we forward them to the Mailing team
+- companies receive their complete invoice (registrations + consumptions)
 
-Wanneer een bericht ontbrekende velden heeft, niet aan de XSD voldoet, een onbekende enum bevat of niet verwerkt kan worden in FossBilling dan sturen wij het naar de Dead Letter Queue (DLQ). Het monitoringteam wordt automatisch verwittigd bij kritieke fouten.
+**6. Monitoring & reliability**
 
-### Waarom dit project belangrijk is
+Our system sends:
+- heartbeats
+- error logs to the DLQ for invalid messages
+- alerts when the invoicing system goes down
 
-Ons systeem zorgt ervoor dat:
-- bedrijven correcte facturen ontvangen
-- deelnemers tijdig bevestigingen krijgen
-- financiële gegevens niet verloren gaan
-- het event administratief vlot verloopt
-- alle teams op elkaar afgestemd blijven
-  
-Wij zijn de financiële backbone van het hele event.
+### Error handling
+
+When a message has missing fields, does not comply with the XSD, contains an unknown enum value, or cannot be processed in FossBilling, we forward it to the Dead Letter Queue (DLQ). The monitoring team is automatically notified of critical errors.
+
+### Why this project matters
+
+Our system ensures that:
+- companies receive correct invoices
+- participants receive confirmations in time
+- financial data is not lost
+- the event runs smoothly from an administrative perspective
+- all teams remain aligned
+
+We are the financial backbone of the entire event.

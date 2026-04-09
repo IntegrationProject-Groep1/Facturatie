@@ -62,7 +62,8 @@ def test_create_client_includes_company_when_linked() -> None:
     """_create_client must include company in payload when company_name is set."""
     with patch("src.services.fossbilling_api.requests.post", return_value=mock_post_response(1)) as mock_post:
         _create_client(CUSTOMER_DATA_COMPANY)
-    payload = mock_post.call_args.kwargs.get("data") or mock_post.call_args.args[1] if mock_post.call_args.args else mock_post.call_args[1]["data"]
+        _, kwargs = mock_post.call_args
+        payload = kwargs.get("data")
     assert payload.get("company") == "Bedrijf NV"
 
 
@@ -121,7 +122,9 @@ def test_get_or_create_client_creates_when_not_found() -> None:
 
 
 INVOICE_ITEMS = [{"title": "Inschrijvingskosten", "price": "150.00", "quantity": 1, "currency": "eur"}]
-INVOICE_ITEMS_VAT = [{"title": "Ticket", "price": "50.00", "quantity": 2, "currency": "eur", "vat_rate": 21, "sku": "TICKET-001"}]
+INVOICE_ITEMS_VAT = [
+    {"title": "Ticket", "price": "50.00", "quantity": 2, "currency": "eur", "vat_rate": 21, "sku": "TICKET-001"}
+]
 
 
 # _create_invoice tests
@@ -145,7 +148,10 @@ def test_create_invoice_raises_on_api_error() -> None:
 
 def test_create_invoice_sends_vat_rate_and_sku() -> None:
     """_create_invoice must include vat_rate and sku in the payload when provided."""
-    with patch("src.services.fossbilling_api.requests.post", return_value=mock_post_response("INV-2026-002")) as mock_post:
+    with patch(
+        "src.services.fossbilling_api.requests.post",
+        return_value=mock_post_response("INV-2026-002")
+    ) as mock_post:
         _create_invoice(42, INVOICE_ITEMS_VAT)
     payload = mock_post.call_args.kwargs.get("data") or mock_post.call_args[1]["data"]
     assert payload.get("items[0][taxrate]") == 21
@@ -158,7 +164,10 @@ def test_create_invoice_supports_multiple_items() -> None:
         {"title": "Item A", "price": "10.00", "quantity": 1},
         {"title": "Item B", "price": "20.00", "quantity": 2},
     ]
-    with patch("src.services.fossbilling_api.requests.post", return_value=mock_post_response("INV-2026-003")) as mock_post:
+    with patch(
+        "src.services.fossbilling_api.requests.post",
+        return_value=mock_post_response("INV-2026-003")
+    ) as mock_post:
         _create_invoice(42, items)
     payload = mock_post.call_args.kwargs.get("data") or mock_post.call_args[1]["data"]
     assert payload.get("items[0][title]") == "Item A"
