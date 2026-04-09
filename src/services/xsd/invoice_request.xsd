@@ -52,7 +52,7 @@
                     <xs:element name="amount" minOccurs="0">
                       <xs:complexType>
                         <xs:simpleContent>
-                          <xs:extension base="xs:string">
+                          <xs:extension base="xs:decimal">
                             <xs:attribute name="currency" type="xs:string" default="eur"/>
                           </xs:extension>
                         </xs:simpleContent>
