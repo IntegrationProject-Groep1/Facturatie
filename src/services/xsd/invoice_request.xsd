@@ -45,6 +45,25 @@
                 </xs:complexType>
               </xs:element>
 
+              <xs:element name="invoice" minOccurs="0">
+                <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="description" type="xs:string" minOccurs="0"/>
+                    <xs:element name="amount" minOccurs="0">
+                      <xs:complexType>
+                        <xs:simpleContent>
+                          <xs:extension base="xs:string">
+                            <xs:attribute name="currency" type="xs:string" default="eur"/>
+                          </xs:extension>
+                        </xs:simpleContent>
+                      </xs:complexType>
+                    </xs:element>
+                    <xs:element name="due_date" type="xs:string" minOccurs="0"/>
+                    <xs:element name="invoice_number" type="xs:string" minOccurs="0"/>
+                  </xs:sequence>
+                </xs:complexType>
+              </xs:element>
+
               <xs:element name="items" minOccurs="0">
                 <xs:complexType>
                   <xs:sequence>
