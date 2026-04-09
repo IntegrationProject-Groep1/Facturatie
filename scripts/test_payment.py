@@ -49,4 +49,4 @@ def mark_invoice_as_paid(invoice_id, amount="15.00"):
     send_message(xml_str, routing_key="crm.to.facturatie")
 
 if __name__ == "__main__":
-    mark_invoice_as_paid(1)
+    mark_invoice_as_paid(2)
