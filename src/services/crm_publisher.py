@@ -9,7 +9,7 @@ from src.services.rabbitmq_utils import get_connection
 
 load_dotenv()
 
-CRM_QUEUE = "crm"
+CRM_QUEUE = "facturatie.to.crm"
 
 
 def build_invoice_cancelled_xml(
