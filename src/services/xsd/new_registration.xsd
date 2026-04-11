@@ -26,6 +26,8 @@
                   <xs:sequence>
                     <xs:element name="id" type="xs:string"/>
                     <xs:element name="email" type="xs:string"/>
+                    <xs:element name="first_name" type="xs:string" minOccurs="0"/>
+                    <xs:element name="last_name" type="xs:string" minOccurs="0"/>
                     <xs:element name="is_company_linked" type="xs:boolean"/>
                     <xs:element name="company_name" type="xs:string" minOccurs="0"/>
                     <xs:element name="address">
