@@ -42,6 +42,8 @@ VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
     <customer>
       <id>12345</id>
       <email>info@bedrijf.be</email>
+      <first_name>Test</first_name>
+      <last_name>User</last_name>
       <is_company_linked>false</is_company_linked>
       <address>
         <street>Kiekenmarkt</street>

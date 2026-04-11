@@ -86,6 +86,8 @@ def build_registration_xml(
     ET.SubElement(customer, "id").text = "REG-999"
     if email is not None:
         ET.SubElement(customer, "email").text = email
+    ET.SubElement(customer, "first_name").text = "Test"
+    ET.SubElement(customer, "last_name").text = "User"
     ET.SubElement(customer, "is_company_linked").text = is_company_linked
 
     address = ET.SubElement(customer, "address")
