@@ -1,8 +1,14 @@
+import logging
 import sys
 import time
 import threading
 from src.services.rabbitmq_receiver import start_receiver
 from src.services.dlq_consumer import start_dlq_consumer
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
 
 def main():
