@@ -158,6 +158,18 @@ def pay_invoice(invoice_id: str, amount: str) -> bool:
         return False
 
 
+def get_invoice_status(invoice_id: str) -> str | None:
+    """Returns the status of an invoice from FossBilling (e.g. 'paid', 'unpaid', 'cancelled').
+    Returns None if the invoice is not found or the API call fails.
+    """
+    try:
+        result = _api_post("admin/invoice/get", {"id": invoice_id})
+        return result.get("result", {}).get("status")
+    except Exception as e:
+        print(f"[FOSSBILLING] ERROR: Could not fetch status for invoice '{invoice_id}': {type(e).__name__}: {e}")
+        return None
+
+
 def cancel_invoice(invoice_id: str) -> bool:
     """Cancels an invoice in FossBilling by setting its status to 'cancelled'.
     Returns True on success, False on any failure.

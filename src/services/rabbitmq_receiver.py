@@ -275,7 +275,35 @@ def process_message(
         customer_id = root.findtext("body/customer/id")
         correlation_id = root.findtext("header/correlation_id")
 
+        if not invoice_id:
+            send_to_dlq(channel, body, ["ERROR: missing invoice_id in invoice_cancelled message"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
         print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
+
+        # Step: check invoice status before cancelling
+        status = fossbilling_client.get_invoice_status(invoice_id)
+
+        if status is None:
+            print(f"[RECEIVER][{msg_type}] Invoice '{invoice_id}' not found in FossBilling")
+            crm_publisher.publish_cancellation_failed(
+                invoice_id, customer_id, correlation_id, reason="invoice_not_found"
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        if status in ("paid", "cancelled"):
+            reason = "invoice_already_paid" if status == "paid" else "invoice_already_cancelled"
+            print(
+                f"[RECEIVER][{msg_type}] Cancellation blocked"
+                f" — invoice '{invoice_id}' has status '{status}'"
+            )
+            crm_publisher.publish_cancellation_failed(
+                invoice_id, customer_id, correlation_id, reason=reason
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
 
         success = fossbilling_client.cancel_invoice(invoice_id)
         if not success:
