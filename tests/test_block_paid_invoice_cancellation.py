@@ -58,20 +58,9 @@ def test_get_invoice_status_returns_pending():
 
 
 def test_get_invoice_status_returns_none_when_not_found():
-    """Returns None when FossBilling explicitly reports the invoice as not found."""
-    with patch("src.services.fossbilling_api._api_post",
-               side_effect=Exception("FossBilling API error on 'admin/invoice/get': Invoice was not found")):
+    """Returns None when FossBilling raises an exception (invoice not found)."""
+    with patch("src.services.fossbilling_api._api_post", side_effect=Exception("not found")):
         assert get_invoice_status("INV-999") is None
-
-
-def test_get_invoice_status_raises_on_connection_error():
-    """Re-raises exception when FossBilling is unreachable (transient error)."""
-    with patch("src.services.fossbilling_api._api_post", side_effect=Exception("Connection refused")):
-        try:
-            get_invoice_status("INV-999")
-            assert False, "Expected exception to be raised"
-        except Exception as e:
-            assert "Connection refused" in str(e)
 
 
 # --- Unit tests: build_cancellation_failed_xml ---
@@ -208,9 +197,9 @@ def test_invoice_not_found_sends_error_to_crm():
     assert "invoice_not_found" in str(args)
 
 
-def test_fossbilling_unreachable_during_status_check_sends_to_dlq():
-    """When FossBilling is temporarily unreachable, get_invoice_status raises an exception.
-    The message must be sent to DLQ and nacked so it can be replayed later — not lost.
+def test_fossbilling_unreachable_during_status_check_acks_and_notifies_crm():
+    """When FossBilling is temporarily unreachable, get_invoice_status returns None.
+    The message must still be acked and CRM must be notified — not silently dropped to DLQ.
     """
     channel = MagicMock()
     body = _build_xml_bytes()
@@ -218,11 +207,13 @@ def test_fossbilling_unreachable_during_status_check_sends_to_dlq():
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
-               side_effect=Exception("Connection refused")):
+               return_value=None), \
+         patch("src.services.rabbitmq_receiver.crm_publisher.publish_cancellation_failed") as mock_failed:
         process_message(channel, _make_method(), MagicMock(), body)
 
-    channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
-    channel.basic_ack.assert_not_called()
+    channel.basic_ack.assert_called_once_with(delivery_tag=1)
+    channel.basic_nack.assert_not_called()
+    mock_failed.assert_called_once()
 
 
 def test_empty_invoice_id_sends_to_dlq():

@@ -284,14 +284,7 @@ def process_message(
         print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
 
         # Step: check invoice status before cancelling
-        try:
-            status = fossbilling_client.get_invoice_status(invoice_id)
-        except Exception as e:
-            error_msg = f"ERROR: FossBilling unreachable during status check: {e}"
-            print(f"[RECEIVER][{msg_type}] {error_msg}")
-            send_to_dlq(channel, body, [error_msg])
-            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-            return
+        status = fossbilling_client.get_invoice_status(invoice_id)
 
         if status is None:
             print(f"[RECEIVER][{msg_type}] Invoice '{invoice_id}' not found in FossBilling")
