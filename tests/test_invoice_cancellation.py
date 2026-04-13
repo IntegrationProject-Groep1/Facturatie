@@ -78,6 +78,8 @@ def test_fossbilling_failure_sends_to_dlq():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
+               return_value="unpaid"), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice", return_value=False):
         process_message(channel, method, MagicMock(), body)
 
@@ -94,6 +96,8 @@ def test_successful_flow_sends_to_crm():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
+               return_value="unpaid"), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice", return_value=True), \
          patch("src.services.rabbitmq_receiver.crm_publisher.publish_invoice_cancelled") as mock_crm:
         process_message(channel, method, MagicMock(), body)

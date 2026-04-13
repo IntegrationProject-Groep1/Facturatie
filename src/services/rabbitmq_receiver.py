@@ -1,9 +1,11 @@
+import logging
 import pika
 import pika.channel
 import pika.spec
 from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
+from defusedxml.ElementTree import fromstring as defused_fromstring
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
 from .rabbitmq_sender import build_invoice_request_xml, build_payment_confirmed_xml, send_message
@@ -101,7 +103,7 @@ def process_message(
     # Step 1: parse XML — catch both invalid XML and bad encodings
     try:
         xml_str = body.decode("utf-8")
-        root = ET.fromstring(xml_str)
+        root = defused_fromstring(xml_str)
     except (ET.ParseError, UnicodeDecodeError) as e:
         print(f"[RECEIVER] ERROR: Invalid XML or encoding — {e}")
         send_to_dlq(channel, body, [f"ERROR: invalid_xml: {e}"])
@@ -275,7 +277,50 @@ def process_message(
         customer_id = root.findtext("body/customer/id")
         correlation_id = root.findtext("header/correlation_id")
 
+        if not invoice_id:
+            send_to_dlq(channel, body, ["ERROR: missing invoice_id in invoice_cancelled message"])
+            crm_publisher.publish_cancellation_failed(
+                invoice_id="unknown",
+                customer_id=customer_id,
+                correlation_id=correlation_id,
+                reason="missing_invoice_id",
+            )
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
         print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
+
+        # Step: check invoice status before cancelling
+        try:
+            status = fossbilling_client.get_invoice_status(invoice_id)
+        except Exception as e:
+            error_msg = f"ERROR: FossBilling unreachable during status check: {e}"
+            logging.error("[RECEIVER][%s] %s", msg_type, error_msg)
+            send_to_dlq(channel, body, [error_msg])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        if status is None:
+            logging.warning(
+                "[RECEIVER][%s] Invoice '%s' not found in FossBilling", msg_type, invoice_id
+            )
+            crm_publisher.publish_cancellation_failed(
+                invoice_id, customer_id, correlation_id, reason="invoice_not_found"
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        if status in ("paid", "cancelled"):
+            reason = "invoice_already_paid" if status == "paid" else "invoice_already_cancelled"
+            logging.warning(
+                "[RECEIVER][%s] Cancellation blocked — invoice '%s' has status '%s'",
+                msg_type, invoice_id, status
+            )
+            crm_publisher.publish_cancellation_failed(
+                invoice_id, customer_id, correlation_id, reason=reason
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
 
         success = fossbilling_client.cancel_invoice(invoice_id)
         if not success:
@@ -285,7 +330,7 @@ def process_message(
             return
 
         crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
-        print(f"[RECEIVER][{msg_type}] Flow complete for invoice '{invoice_id}'")
+        logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
     else:
