@@ -14,7 +14,7 @@ def _api_post(endpoint: str, data: dict) -> dict:
     """Makes an authenticated POST request to the FossBilling admin API."""
     url = f"{os.getenv('BILLING_API_URL', 'http://localhost/api')}/{endpoint}"
     auth = (os.getenv("BILLING_API_USERNAME", "admin"), os.getenv("BILLING_API_TOKEN", ""))
-    response = requests.post(url, data=data, auth=auth, timeout=10, verify=False)
+    response = requests.post(url, data=data, auth=auth, timeout=10)
     response.raise_for_status()
     result = response.json()
     if not result.get("result"):

@@ -88,11 +88,6 @@ def process_dlq_message(
 
 
 def start_dlq_consumer(queue: str | None = None) -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-
     if queue is None:
         queue = os.getenv("QUEUE_DLQ", "facturatie.dlq")
 

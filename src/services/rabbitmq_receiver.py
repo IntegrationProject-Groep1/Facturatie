@@ -4,6 +4,7 @@ import pika.spec
 from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
+from defusedxml.ElementTree import fromstring as defused_fromstring
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
 from .rabbitmq_sender import build_invoice_request_xml, build_payment_confirmed_xml, send_message
@@ -101,7 +102,7 @@ def process_message(
     # Step 1: parse XML — catch both invalid XML and bad encodings
     try:
         xml_str = body.decode("utf-8")
-        root = ET.fromstring(xml_str)
+        root = defused_fromstring(xml_str)
     except (ET.ParseError, UnicodeDecodeError) as e:
         print(f"[RECEIVER] ERROR: Invalid XML or encoding — {e}")
         send_to_dlq(channel, body, [f"ERROR: invalid_xml: {e}"])
