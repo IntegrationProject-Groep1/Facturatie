@@ -12,6 +12,8 @@ MAX_RETRIES = 3
 
 class FossBillingNotFoundError(Exception):
     """Raised when FossBilling confirms the requested resource does not exist."""
+
+
 RETRY_DELAY_SECONDS = 2
 
 
