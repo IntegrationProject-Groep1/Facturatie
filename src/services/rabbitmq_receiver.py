@@ -279,6 +279,12 @@ def process_message(
 
         if not invoice_id:
             send_to_dlq(channel, body, ["ERROR: missing invoice_id in invoice_cancelled message"])
+            crm_publisher.publish_cancellation_failed(
+                invoice_id="unknown",
+                customer_id=customer_id,
+                correlation_id=correlation_id,
+                reason="missing_invoice_id",
+            )
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 

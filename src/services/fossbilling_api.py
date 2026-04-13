@@ -8,6 +8,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 MAX_RETRIES = 3
+
+
+class FossBillingNotFoundError(Exception):
+    """Raised when FossBilling confirms the requested resource does not exist."""
 RETRY_DELAY_SECONDS = 2
 
 
@@ -20,6 +24,8 @@ def _api_post(endpoint: str, data: dict) -> dict:
     result = response.json()
     if not result.get("result"):
         error_msg = result.get("error", {}).get("message", "unknown error")
+        if "not found" in error_msg.lower():
+            raise FossBillingNotFoundError(error_msg)
         raise Exception(f"FossBilling API error on '{endpoint}': {error_msg}")
     return result
 
@@ -167,10 +173,10 @@ def get_invoice_status(invoice_id: str) -> str | None:
     try:
         result = _api_post("admin/invoice/get", {"id": invoice_id})
         return result.get("result", {}).get("status")
+    except FossBillingNotFoundError:
+        logging.info("[FOSSBILLING] Invoice '%s' not found in FossBilling", invoice_id)
+        return None
     except Exception as e:
-        if "not found" in str(e).lower():
-            logging.info("[FOSSBILLING] Invoice '%s' not found in FossBilling", invoice_id)
-            return None
         logging.error(
             "[FOSSBILLING] ERROR: Could not fetch status for invoice '%s': %s: %s",
             invoice_id, type(e).__name__, e

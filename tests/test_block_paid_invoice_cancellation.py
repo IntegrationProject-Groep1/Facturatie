@@ -58,9 +58,10 @@ def test_get_invoice_status_returns_pending():
 
 
 def test_get_invoice_status_returns_none_when_not_found():
-    """Returns None when FossBilling explicitly reports the invoice as not found."""
+    """Returns None when FossBilling raises FossBillingNotFoundError."""
+    from src.services.fossbilling_api import FossBillingNotFoundError
     with patch("src.services.fossbilling_api._api_post",
-               side_effect=Exception("FossBilling API error on 'admin/invoice/get': Invoice was not found")):
+               side_effect=FossBillingNotFoundError("Invoice was not found")):
         assert get_invoice_status("INV-999") is None
 
 
