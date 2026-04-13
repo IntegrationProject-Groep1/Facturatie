@@ -134,9 +134,10 @@ def test_paid_invoice_blocks_cancellation():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
-               return_value="paid"), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status", return_value="paid"), \
+         patch("src.services.rabbitmq_receiver.crm_publisher.publish_cancellation_failed"), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice") as mock_cancel:
+
         process_message(channel, _make_method(), MagicMock(), body)
 
     mock_cancel.assert_not_called()
@@ -232,7 +233,9 @@ def test_empty_invoice_id_sends_to_dlq():
     body = _build_xml_bytes(invoice_id="")
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
-         patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)):
+         patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+         patch("src.services.rabbitmq_receiver.crm_publisher.publish_cancellation_failed"): # VOEG DEZE LIJN TOE
+
         process_message(channel, _make_method(), MagicMock(), body)
 
     channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
