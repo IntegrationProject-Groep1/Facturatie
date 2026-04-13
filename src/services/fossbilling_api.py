@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import uuid
@@ -160,14 +161,21 @@ def pay_invoice(invoice_id: str, amount: str) -> bool:
 
 def get_invoice_status(invoice_id: str) -> str | None:
     """Returns the status of an invoice from FossBilling (e.g. 'paid', 'unpaid', 'cancelled').
-    Returns None if the invoice is not found or the API call fails.
+    Returns None if the invoice is definitively not found.
+    Raises Exception for transient errors (network issues, API unreachable).
     """
     try:
         result = _api_post("admin/invoice/get", {"id": invoice_id})
         return result.get("result", {}).get("status")
     except Exception as e:
-        print(f"[FOSSBILLING] ERROR: Could not fetch status for invoice '{invoice_id}': {type(e).__name__}: {e}")
-        return None
+        if "not found" in str(e).lower():
+            logging.info("[FOSSBILLING] Invoice '%s' not found in FossBilling", invoice_id)
+            return None
+        logging.error(
+            "[FOSSBILLING] ERROR: Could not fetch status for invoice '%s': %s: %s",
+            invoice_id, type(e).__name__, e
+        )
+        raise
 
 
 def cancel_invoice(invoice_id: str) -> bool:

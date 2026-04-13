@@ -1,3 +1,4 @@
+import logging
 import pika
 import pika.channel
 import pika.spec
@@ -284,10 +285,19 @@ def process_message(
         print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
 
         # Step: check invoice status before cancelling
-        status = fossbilling_client.get_invoice_status(invoice_id)
+        try:
+            status = fossbilling_client.get_invoice_status(invoice_id)
+        except Exception as e:
+            error_msg = f"ERROR: FossBilling unreachable during status check: {e}"
+            logging.error("[RECEIVER][%s] %s", msg_type, error_msg)
+            send_to_dlq(channel, body, [error_msg])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
 
         if status is None:
-            print(f"[RECEIVER][{msg_type}] Invoice '{invoice_id}' not found in FossBilling")
+            logging.warning(
+                "[RECEIVER][%s] Invoice '%s' not found in FossBilling", msg_type, invoice_id
+            )
             crm_publisher.publish_cancellation_failed(
                 invoice_id, customer_id, correlation_id, reason="invoice_not_found"
             )
@@ -296,9 +306,9 @@ def process_message(
 
         if status in ("paid", "cancelled"):
             reason = "invoice_already_paid" if status == "paid" else "invoice_already_cancelled"
-            print(
-                f"[RECEIVER][{msg_type}] Cancellation blocked"
-                f" — invoice '{invoice_id}' has status '{status}'"
+            logging.warning(
+                "[RECEIVER][%s] Cancellation blocked — invoice '%s' has status '%s'",
+                msg_type, invoice_id, status
             )
             crm_publisher.publish_cancellation_failed(
                 invoice_id, customer_id, correlation_id, reason=reason
@@ -314,7 +324,7 @@ def process_message(
             return
 
         crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
-        print(f"[RECEIVER][{msg_type}] Flow complete for invoice '{invoice_id}'")
+        logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
     else:

@@ -1,3 +1,4 @@
+import logging
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -97,9 +98,9 @@ def publish_cancellation_failed(
             content_type="application/xml",
         )
     )
-    print(
-        f"[CRM_PUBLISHER] cancellation_failed sent to '{CRM_QUEUE}'"
-        f" for invoice '{invoice_id}' — reason: {reason}"
+    logging.info(
+        "[CRM_PUBLISHER] cancellation_failed sent to '%s' for invoice '%s' — reason: %s",
+        CRM_QUEUE, invoice_id, reason
     )
     connection.close()
 
