@@ -6,12 +6,17 @@ import os
 import xml.etree.ElementTree as ET
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
-from .rabbitmq_sender import build_invoice_request_xml, build_payment_confirmed_xml, send_message
+from .rabbitmq_sender import (
+    build_invoice_request_xml,
+    build_payment_confirmed_xml,
+    publish_invoice_cancelled,
+    send_message,
+)
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq
 )
-from src.services import fossbilling_api as fossbilling_client, crm_publisher
+from src.services import fossbilling_api as fossbilling_client
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
 VALID_TYPES: set[str] = {
@@ -223,6 +228,12 @@ def process_message(
             payment_method = transaction_el.findtext("payment_method") or ""
             transaction_id = transaction_el.findtext("id") or ""
 
+            # Extract customer context
+            customer_el = root.find("body/customer")
+            user_id = customer_el.findtext("user_id") or "" if customer_el is not None else ""
+            email = customer_el.findtext("email") or "" if customer_el is not None else ""
+            payment_context = invoice_el.findtext("payment_context") or ""
+
             print(
                 f"[RECEIVER] Payment data extracted"
                 f" | invoice_id={invoice_id} | amount={amount} {currency}"
@@ -243,7 +254,10 @@ def process_message(
                 payment_method=payment_method,
                 transaction_id=transaction_id,
                 correlation_id=msg_id,
-                due_date=due_date
+                due_date=due_date,
+                user_id=user_id,
+                email=email,
+                payment_context=payment_context,
             )
             send_message(
                 confirmation_xml,
@@ -272,7 +286,11 @@ def process_message(
             return
 
         invoice_id = root.findtext("body/invoice/id")
-        customer_id = root.findtext("body/customer/id")
+        payment_context = root.findtext("body/invoice/payment_context") or ""
+        customer_el = root.find("body/customer")
+        customer_id = customer_el.findtext("id") if customer_el is not None else ""
+        user_id = customer_el.findtext("user_id") or "" if customer_el is not None else ""
+        email = customer_el.findtext("email") or "" if customer_el is not None else ""
         correlation_id = root.findtext("header/correlation_id")
 
         print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
@@ -284,7 +302,11 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
+        publish_invoice_cancelled(
+            invoice_id, customer_id, correlation_id,
+            user_id=user_id, email=email, payment_context=payment_context,
+            channel=channel,
+        )
         print(f"[RECEIVER][{msg_type}] Flow complete for invoice '{invoice_id}'")
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
