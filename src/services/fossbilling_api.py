@@ -23,26 +23,33 @@ def _api_post(endpoint: str, data: dict) -> dict:
     return result
 
 
-def _create_client(customer_data: dict, extra_fields: dict = None) -> int:
-    """Creates a new client in FossBilling. Returns the client_id."""
+def _create_client(customer_data: dict) -> int:
+    """Maakt een client aan. Gebruikt bedrijfsnaam als hoofdnaam voor B2B."""
     address = customer_data.get("address", {})
+    
+    # We bepalen de naam: als het een bedrijf is, gebruiken we de bedrijfsnaam
+    is_b2b = "custom_1" in customer_data
+    
     payload = {
         "email": customer_data["email"],
-        "first_name": customer_data.get("first_name") or "Unknown",
+        "first_name": customer_data.get("first_name") or "Bedrijf",
         "last_name": customer_data.get("last_name") or "-",
         "password": f"Reg-{uuid.uuid4()}",
         "password_confirm": "",
         "address_1": f"{address.get('street', '')} {address.get('number', '')}".strip(),
         "city": address.get("city", ""),
         "postcode": address.get("postal_code", ""),
-        "country": address.get("country", "").upper(),
-        "currency": customer_data.get("fee_currency", "eur").upper(),
+        "country": address.get("country", "BE").upper(),
+        "currency": customer_data.get("fee_currency", "EUR").upper(),
     }
+
+    # Voeg bedrijfsnaam toe aan de officiële FossBilling velden
     if customer_data.get("company_name"):
         payload["company"] = customer_data["company_name"]
-
-    if extra_fields:
-        payload.update(extra_fields)
+    
+    # Voeg de koppeling (custom_1) toe aan de API call
+    if is_b2b:
+        payload["custom_1"] = customer_data["custom_1"]
 
     result = _api_post("admin/client/create", payload)
     return int(result["result"])
@@ -66,72 +73,40 @@ def _get_or_create_client(customer_data: dict) -> int:
     return _create_client(customer_data)
 
 def _get_client_by_custom_field(field_name: str, value: str) -> int | None:
-    """
-    Zoekt een client op basis van een custom field. 
-    We halen de lijst op en filteren handmatig in Python om false positives te voorkomen.
-    """
-    # We gebruiken de 'search' parameter van FossBilling om de lijst te verkleinen
+    """Zoekt specifiek naar een bedrijf en controleert of de ID echt matcht."""
+    # We halen klanten op die lijken op de waarde
     response = _api_post("admin/client/get_list", {"search": value})
     clients = response.get("result", {}).get("list", [])
     
     for client in clients:
-        # Check of het gevraagde veld exact overeenkomt in de resultaten
+        # CRUCIAAL: Controleer handmatig of het veld exact matcht
         if client.get(field_name) == value:
             return int(client["id"])
     return None
 
-def _create_client(customer_data: dict, extra_params: dict = None) -> int:
-    """Maakt een client aan en zorgt dat extra velden (zoals custom_1) worden opgeslagen."""
-    address = customer_data.get("address", {})
-    payload = {
-        "email": customer_data["email"],
-        "first_name": customer_data.get("first_name") or "Onbekend",
-        "last_name": customer_data.get("last_name") or "-",
-        "password": f"Reg-{uuid.uuid4()}",
-        "password_confirm": "",
-        "address_1": f"{address.get('street', '')} {address.get('number', '')}".strip(),
-        "city": address.get("city", ""),
-        "postcode": address.get("postal_code", ""),
-        "country": address.get("country", "BE").upper(),
-        "currency": customer_data.get("fee_currency", "EUR").upper(),
-    }
-    
-    if customer_data.get("company_name"):
-        payload["company"] = customer_data["company_name"]
-    
-    # Cruciaal: voeg de custom_1 (company_id) toe aan de aanmaak-payload
-    if extra_params:
-        payload.update(extra_params)
-
-    result = _api_post("admin/client/create", payload)
-    return int(result["result"])
-
 def get_or_create_client_id(customer_data: dict) -> int:
-    """
-    B2B flow met harde controle op company_id.
-    """
+    # 1. B2B Flow: is er een company_id?
     if customer_data.get("company_id"):
         company_id = customer_data["company_id"]
         
-        # 1. Zoek op company_id (custom_1)
+        # Zoek eerst of we dit bedrijf al kennen
         client_id = _get_client_by_custom_field("custom_1", company_id)
-        
         if client_id:
-            print(f"[FOSSBILLING] B2B Match gevonden! ID: {client_id} voor {company_id}")
+            print(f"[FOSSBILLING] Bestaand bedrijf gevonden (ID: {client_id})")
             return client_id
         
-        # 2. Niet gevonden? Check email om duplicaten te voorkomen
-        existing_id = _get_client_by_email(customer_data["email"])
-        if existing_id:
-            print(f"[FOSSBILLING] Email bestaat al (ID: {existing_id}). Koppelen aan company_id.")
-            # Optioneel: hier zou je een 'admin/client/update' kunnen doen om custom_1 alsnog te zetten
-            return existing_id
-        
-        # 3. Nieuw B2B account aanmaken
-        print(f"[FOSSBILLING] Geen match. Nieuw B2B account voor: {company_id}")
-        return _create_client(customer_data, extra_params={"custom_1": company_id})
+        # Zo niet: Maak een specifiek Bedrijfs-account aan
+        print(f"[FOSSBILLING] Nieuw Bedrijf aanmaken: {customer_data.get('company_name')}")
+        return _create_client({
+            "email": customer_data["email"],
+            "first_name": customer_data.get("company_name", "Bedrijf"),
+            "last_name": "(Zakelijk)",
+            "company_name": customer_data.get("company_name"),
+            "custom_1": company_id, # De link voor de volgende keer
+            "address": customer_data.get("address", {})
+        })
 
-    # B2C flow
+    # 2. B2C Flow: Als er geen company_id is, gebruik e-mail check
     return _get_or_create_client(customer_data)
 
 def update_client(client_id: int, customer_data: dict) -> None:
