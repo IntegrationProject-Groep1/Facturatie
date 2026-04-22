@@ -186,6 +186,74 @@ def get_invoice_status(invoice_id: str) -> str | None:
         raise
 
 
+def get_client_by_company_id(company_id: str) -> int | None:
+    """Looks up a client by company_id in FossBilling. Returns client_id or None if not found."""
+    result = _api_post("admin/client/get_list", {"search": company_id, "per_page": 1})
+    clients = result.get("result", {}).get("list", [])
+    if clients:
+        return int(clients[0]["id"])
+    return None
+
+
+def get_unpaid_invoice_for_client(client_id: int) -> str | None:
+    """Returns the invoice_id of the first unpaid invoice for the given client, or None."""
+    result = _api_post("admin/invoice/get_list", {"client_id": client_id, "status": "unpaid", "per_page": 1})
+    invoices = result.get("result", {}).get("list", [])
+    for invoice in invoices:
+        if invoice.get("status") == "unpaid":
+            return str(invoice["id"])
+    return None
+
+
+def add_item_to_invoice(invoice_id: str, item: dict) -> None:
+    """Adds a single item to an existing invoice in FossBilling."""
+    payload = {
+        "id": invoice_id,
+        "title": item["title"],
+        "price": item["price"],
+        "quantity": item.get("quantity", 1),
+    }
+    if item.get("vat_rate"):
+        payload["taxrate"] = item["vat_rate"]
+    _api_post("admin/invoice/item_add", payload)
+
+
+def process_consumption_order(company_id: str, items: list[dict]) -> str:
+    """
+    Finds or creates an unpaid invoice for the given company and adds all items.
+    Returns the invoice_id.
+    Raises ValueError immediately if company_id is not found.
+    Raises Exception after MAX_RETRIES on transient API failures.
+    """
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            client_id = get_client_by_company_id(company_id)
+            if client_id is None:
+                raise ValueError(f"company_id '{company_id}' not found in FossBilling")
+
+            invoice_id = get_unpaid_invoice_for_client(client_id)
+            if invoice_id is None:
+                invoice_id = _create_invoice(client_id, items)
+                print(f"[FOSSBILLING] New invoice created | invoice_id={invoice_id} | company_id={company_id}")
+            else:
+                for item in items:
+                    add_item_to_invoice(invoice_id, item)
+                print(f"[FOSSBILLING] Items added to invoice | invoice_id={invoice_id} | company_id={company_id}")
+
+            return invoice_id
+
+        except ValueError:
+            raise
+        except Exception as e:
+            last_error = e
+            print(f"[FOSSBILLING] Attempt {attempt}/{MAX_RETRIES} failed: {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SECONDS)
+
+    raise Exception(f"FossBilling consumption order failed after {MAX_RETRIES} attempts: {last_error}")
+
+
 def cancel_invoice(invoice_id: str) -> bool:
     """Cancels an invoice in FossBilling by setting its status to 'cancelled'.
     Returns True on success, False on any failure.
