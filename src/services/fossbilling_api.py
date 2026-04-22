@@ -23,7 +23,7 @@ def _api_post(endpoint: str, data: dict) -> dict:
     return result
 
 
-def _create_client(customer_data: dict) -> int:
+def _create_client(customer_data: dict, extra_fields: dict = None) -> int:
     """Creates a new client in FossBilling. Returns the client_id."""
     address = customer_data.get("address", {})
     payload = {
@@ -40,6 +40,9 @@ def _create_client(customer_data: dict) -> int:
     }
     if customer_data.get("company_name"):
         payload["company"] = customer_data["company_name"]
+
+    if extra_fields:
+        payload.update(extra_fields)
 
     result = _api_post("admin/client/create", payload)
     return int(result["result"])
@@ -62,6 +65,74 @@ def _get_or_create_client(customer_data: dict) -> int:
         return existing_id
     return _create_client(customer_data)
 
+def _get_client_by_custom_field(field_name: str, value: str) -> int | None:
+    """
+    Zoekt een client op basis van een custom field. 
+    We halen de lijst op en filteren handmatig in Python om false positives te voorkomen.
+    """
+    # We gebruiken de 'search' parameter van FossBilling om de lijst te verkleinen
+    response = _api_post("admin/client/get_list", {"search": value})
+    clients = response.get("result", {}).get("list", [])
+    
+    for client in clients:
+        # Check of het gevraagde veld exact overeenkomt in de resultaten
+        if client.get(field_name) == value:
+            return int(client["id"])
+    return None
+
+def _create_client(customer_data: dict, extra_params: dict = None) -> int:
+    """Maakt een client aan en zorgt dat extra velden (zoals custom_1) worden opgeslagen."""
+    address = customer_data.get("address", {})
+    payload = {
+        "email": customer_data["email"],
+        "first_name": customer_data.get("first_name") or "Onbekend",
+        "last_name": customer_data.get("last_name") or "-",
+        "password": f"Reg-{uuid.uuid4()}",
+        "password_confirm": "",
+        "address_1": f"{address.get('street', '')} {address.get('number', '')}".strip(),
+        "city": address.get("city", ""),
+        "postcode": address.get("postal_code", ""),
+        "country": address.get("country", "BE").upper(),
+        "currency": customer_data.get("fee_currency", "EUR").upper(),
+    }
+    
+    if customer_data.get("company_name"):
+        payload["company"] = customer_data["company_name"]
+    
+    # Cruciaal: voeg de custom_1 (company_id) toe aan de aanmaak-payload
+    if extra_params:
+        payload.update(extra_params)
+
+    result = _api_post("admin/client/create", payload)
+    return int(result["result"])
+
+def get_or_create_client_id(customer_data: dict) -> int:
+    """
+    B2B flow met harde controle op company_id.
+    """
+    if customer_data.get("company_id"):
+        company_id = customer_data["company_id"]
+        
+        # 1. Zoek op company_id (custom_1)
+        client_id = _get_client_by_custom_field("custom_1", company_id)
+        
+        if client_id:
+            print(f"[FOSSBILLING] B2B Match gevonden! ID: {client_id} voor {company_id}")
+            return client_id
+        
+        # 2. Niet gevonden? Check email om duplicaten te voorkomen
+        existing_id = _get_client_by_email(customer_data["email"])
+        if existing_id:
+            print(f"[FOSSBILLING] Email bestaat al (ID: {existing_id}). Koppelen aan company_id.")
+            # Optioneel: hier zou je een 'admin/client/update' kunnen doen om custom_1 alsnog te zetten
+            return existing_id
+        
+        # 3. Nieuw B2B account aanmaken
+        print(f"[FOSSBILLING] Geen match. Nieuw B2B account voor: {company_id}")
+        return _create_client(customer_data, extra_params={"custom_1": company_id})
+
+    # B2C flow
+    return _get_or_create_client(customer_data)
 
 def update_client(client_id: int, customer_data: dict) -> None:
     """Updates an existing client in FossBilling with the provided customer data.
@@ -123,7 +194,7 @@ def create_registration_invoice(customer_data: dict) -> str:
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            client_id = _get_or_create_client(customer_data)
+            client_id = get_or_create_client_id(customer_data)
             invoice_id = _create_invoice(client_id, items)
             print(f"[FOSSBILLING] Invoice created | invoice_id={invoice_id} | attempt={attempt}/{MAX_RETRIES}")
             return invoice_id

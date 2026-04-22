@@ -30,6 +30,7 @@
                     <xs:element name="last_name" type="xs:string" minOccurs="0"/>
                     <xs:element name="phone" type="xs:string" minOccurs="0"/>
                     <xs:element name="company_name" type="xs:string" minOccurs="0"/>
+                    <xs:element name="company_id" type="xs:string" minOccurs="0"/>
                     <xs:element name="address" minOccurs="0">
                       <xs:complexType>
                         <xs:sequence>

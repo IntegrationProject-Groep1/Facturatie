@@ -60,6 +60,7 @@ def extract_customer_data(root: ET.Element) -> dict:
         "first_name": root.findtext("body/customer/first_name") or "",
         "last_name": root.findtext("body/customer/last_name") or "",
         "company_name": root.findtext("body/customer/company_name") or "",
+        "company_id": root.findtext("body/customer/company_id") or "",
         "address": {
             field: root.findtext(f"body/customer/address/{field}") or ""
             for field in ["street", "number", "postal_code", "city", "country"]
@@ -76,6 +77,7 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
         "first_name": root.findtext("body/customer/first_name") or "",
         "last_name": root.findtext("body/customer/last_name") or "",
         "company_name": root.findtext("body/customer/company_name") or "",
+        "company_id": root.findtext("body/customer/company_id") or "",
         "address": {
             field: root.findtext(f"body/customer/address/{field}") or ""
             for field in ["street", "number", "postal_code", "city", "country"]
