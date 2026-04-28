@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import fromstring as defused_fromstring
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
-from .rabbitmq_sender import build_invoice_request_xml, build_payment_confirmed_xml, send_message
+from .rabbitmq_sender import build_invoice_created_notification_xml, build_payment_confirmed_xml, send_message
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq
@@ -162,22 +162,22 @@ def process_message(
             return
 
         # Build and send XML for the Mailing Service
-        invoice_request_xml = build_invoice_request_xml(
+        notification_xml = build_invoice_created_notification_xml(
             invoice_id=invoice_id,
-            client_email=customer_data["email"],
+            recipient_email=customer_data["email"],
             correlation_id=msg_id,
             company_name=customer_data.get("company_name", ""),
             master_uuid=master_uuid,
         )
 
         send_message(
-            invoice_request_xml,
+            notification_xml,
             routing_key="facturatie.to.mailing",
             channel=channel
         )
 
         print(
-            f"[RECEIVER] invoice_request sent | invoice_id={invoice_id}"
+            f"[RECEIVER] invoice_created_notification sent | invoice_id={invoice_id}"
             f" | correlation_id={msg_id}"
         )
 
@@ -242,13 +242,14 @@ def process_message(
                     consumption_store.clear_by_ids(row_ids)
 
                     try:
-                        invoice_xml = build_invoice_request_xml(
+                        notification_xml = build_invoice_created_notification_xml(
                             invoice_id=invoice_id,
-                            client_email=meta["email"],
-                            correlation_id=msg_id,
-                            company_name=meta["company_name"],
+                            recipient_email=meta["email"],
+                            subject=f"Uw factuur {invoice_id} staat klaar",
+                            message_text="Bedankt voor uw gebruik van onze diensten. In de bijlage vindt u de details.",
+                            pdf_url=f"{os.getenv('BILLING_WEB_URL', 'https://portal.yourdomain.com').rstrip('/')}/invoice/{invoice_id}"
                         )
-                        send_message(invoice_xml, routing_key="facturatie.to.mailing", channel=channel)
+                        send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
                     except Exception as mail_err:
                         # We loggen de mail fout, maar gaan door (de factuur is immers al klaar)
                         logging.warning("[RECEIVER] Invoice created but mail failed for %s: %s", company_id, mail_err)
