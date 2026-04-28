@@ -188,10 +188,11 @@ def get_invoice_status(invoice_id: str) -> str | None:
 
 def get_client_by_company_id(company_id: str) -> int | None:
     """Looks up a client by company_id in FossBilling. Returns client_id or None if not found."""
-    result = _api_post("admin/client/get_list", {"search": company_id, "per_page": 1})
+    result = _api_post("admin/client/get_list", {"search": company_id, "per_page": 100})
     clients = result.get("result", {}).get("list", [])
-    if clients:
-        return int(clients[0]["id"])
+    for client in clients:
+        if client.get("company") == company_id or str(client.get("id")) == company_id:
+            return int(client["id"])
     return None
 
 

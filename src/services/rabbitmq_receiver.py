@@ -358,13 +358,13 @@ def process_message(
 
         try:
             consumption_store.save_items(company_id, badge_id, master_uuid, items)
-            print(
-                f"[RECEIVER] consumption_order saved | company_id={company_id}"
-                f" | badge_id={badge_id} | items={len(items)}"
+            logging.info(
+                "[RECEIVER] consumption_order saved | company_id=%s | badge_id=%s | items=%d",
+                company_id, badge_id, len(items),
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:
-            print(f"[RECEIVER] ERROR: consumption_order_save_failed: {e}")
+            logging.error("[RECEIVER] ERROR: consumption_order_save_failed: %s", e)
             send_to_dlq(channel, body, [f"ERROR: consumption_order_save_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 

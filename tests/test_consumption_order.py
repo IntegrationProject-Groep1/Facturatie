@@ -109,7 +109,7 @@ def _mock_error_response(message: str) -> MagicMock:
 class TestGetClientByCompanyId:
     def test_returns_client_id_when_found(self):
         with patch("src.services.fossbilling_api.requests.post",
-                   return_value=_mock_response({"list": [{"id": 42}], "total": 1})):
+                   return_value=_mock_response({"list": [{"id": 42, "company": "FOSS-CUST-102"}], "total": 1})):
             assert get_client_by_company_id("FOSS-CUST-102") == 42
 
     def test_returns_none_when_not_found(self):
