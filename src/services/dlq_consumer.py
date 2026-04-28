@@ -94,7 +94,7 @@ def start_dlq_consumer(queue: str | None = None) -> None:
     connection = get_connection()
     channel = connection.channel()
 
-    channel.queue_declare(queue=queue, durable=True)
+    channel.queue_declare(queue=queue, passive=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=process_dlq_message)
 

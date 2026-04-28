@@ -49,6 +49,14 @@ def build_consumption_order_xml(
         ET.SubElement(customer, "company_id").text = company_id
         ET.SubElement(customer, "company_name").text = company_name
 
+    ET.SubElement(customer, "email").text = ""
+    addr = ET.SubElement(customer, "address")
+    for field in ["street", "number", "postal_code", "city"]:
+        ET.SubElement(addr, field).text = ""
+    ET.SubElement(addr, "country").text = "be"
+
+    ET.SubElement(body, "payment_method").text = "company_link"
+
     # Build body — items
     items_el = ET.SubElement(body, "items")
     for item in items:
@@ -111,6 +119,7 @@ def send_message(
 def build_invoice_created_notification_xml(
     invoice_id: str,
     recipient_email: str,
+    master_uuid: str,
     subject: str = "Uw nieuwe factuur",
     message_text: str = "Beste klant, uw factuur staat klaar.",
     source: str = "facturatie",
@@ -135,6 +144,8 @@ def build_invoice_created_notification_xml(
     ET.SubElement(header, "type").text = "invoice_created_notification"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "correlation_id").text = correlation_id
+    ET.SubElement(header, "master_uuid").text = master_uuid
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "recipient_email").text = recipient_email
