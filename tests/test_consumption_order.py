@@ -406,15 +406,16 @@ class TestProcessMessageEventEnded:
              patch("src.services.rabbitmq_receiver.consumption_store.get_pending_company_ids",
                    return_value=["FOSS-CUST-102"]), \
              patch("src.services.rabbitmq_receiver.consumption_store.get_items_for_company",
-                   return_value=[
-                       {"title": "Coca-Cola (badge: B1)", "price": "2.50", "quantity": 1, "vat_rate": "21"},
-                   ]), \
+                   return_value=(
+                       [{"title": "Coca-Cola (badge: B1)", "price": "2.50", "quantity": 1, "vat_rate": "21"}],
+                       [1],
+                   )), \
              patch("src.services.rabbitmq_receiver.consumption_store.get_company_meta",
                    return_value={"email": "info@bedrijf.be", "company_name": "Bedrijf NV"}), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
                    return_value="INV-2026-001"), \
              patch("src.services.rabbitmq_receiver.send_message"), \
-             patch("src.services.rabbitmq_receiver.consumption_store.clear_company"):
+             patch("src.services.rabbitmq_receiver.consumption_store.clear_by_ids"):
             process_message(channel, _make_method(), MagicMock(), body)
 
         channel.basic_ack.assert_called_once_with(delivery_tag=1)
@@ -445,7 +446,7 @@ class TestProcessMessageEventEnded:
              patch("src.services.rabbitmq_receiver.consumption_store.get_pending_company_ids",
                    return_value=["FOSS-CUST-102"]), \
              patch("src.services.rabbitmq_receiver.consumption_store.get_items_for_company",
-                   return_value=[]), \
+                   return_value=([], [])), \
              patch("src.services.rabbitmq_receiver.consumption_store.get_company_meta",
                    return_value={"email": "", "company_name": ""}), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
@@ -465,13 +466,16 @@ class TestProcessMessageEventEnded:
              patch("src.services.rabbitmq_receiver.consumption_store.get_pending_company_ids",
                    return_value=["FOSS-CUST-102"]), \
              patch("src.services.rabbitmq_receiver.consumption_store.get_items_for_company",
-                   return_value=[{"title": "Fanta", "price": "2.50", "quantity": 1, "vat_rate": "21"}]), \
+                   return_value=(
+                       [{"title": "Fanta", "price": "2.50", "quantity": 1, "vat_rate": "21"}],
+                       [42],
+                   )), \
              patch("src.services.rabbitmq_receiver.consumption_store.get_company_meta",
                    return_value={"email": "test@test.be", "company_name": "Test NV"}), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
                    return_value="INV-001"), \
              patch("src.services.rabbitmq_receiver.send_message"), \
-             patch("src.services.rabbitmq_receiver.consumption_store.clear_company") as mock_clear:
+             patch("src.services.rabbitmq_receiver.consumption_store.clear_by_ids") as mock_clear:
             process_message(channel, _make_method(), MagicMock(), body)
 
-        mock_clear.assert_called_once_with("FOSS-CUST-102")
+        mock_clear.assert_called_once_with([42])

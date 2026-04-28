@@ -96,7 +96,7 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
 def process_message(
     channel: pika.channel.Channel,
     method: pika.spec.Basic.Deliver,
-    properties: pika.spec.BasicProperties,
+    _properties: pika.spec.BasicProperties,
     body: bytes
 ) -> None:
     print("\n[RECEIVER] Message received")
@@ -220,7 +220,7 @@ def process_message(
             errors = []
             for company_id in company_ids:
                 try:
-                    items = consumption_store.get_items_for_company(company_id)
+                    items, row_ids = consumption_store.get_items_for_company(company_id)
                     meta = consumption_store.get_company_meta(company_id)
                     invoice_id = fossbilling_client.process_consumption_order(company_id, items)
                     invoice_xml = build_invoice_request_xml(
@@ -230,7 +230,7 @@ def process_message(
                         company_name=meta["company_name"],
                     )
                     send_message(invoice_xml, routing_key="facturatie.to.mailing", channel=channel)
-                    consumption_store.clear_company(company_id)
+                    consumption_store.clear_by_ids(row_ids)
                     logging.info(
                         "[RECEIVER] event_ended: invoice sent | company_id=%s | invoice_id=%s",
                         company_id, invoice_id,
