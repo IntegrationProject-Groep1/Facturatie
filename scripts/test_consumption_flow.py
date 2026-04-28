@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.services.consumption_store import (  # noqa: E402
     init_db, save_items, get_pending_company_ids,
-    get_items_for_company, clear_company,
+    get_items_for_company, clear_by_ids,
 )
 from src.services.fossbilling_api import process_consumption_order  # noqa: E402
 
@@ -60,7 +60,7 @@ save_items(
 print("  -> BADGE-002 saved")
 
 step("4. Reading accumulated items from MySQL")
-items = get_items_for_company(COMPANY_ID)
+items, row_ids = get_items_for_company(COMPANY_ID)
 print(f"  -> {len(items)} items pending for {COMPANY_ID}:")
 for item in items:
     print(f"     {item}")
@@ -75,11 +75,11 @@ try:
     print(f"  -> Invoice created! invoice_id = {invoice_id}")
 
     step("7. Clearing MySQL rows after invoicing")
-    clear_company(COMPANY_ID)
-    print(f"  -> Cleared pending rows for {COMPANY_ID}")
+    clear_by_ids(row_ids)
+    print(f"  -> Cleared {len(row_ids)} invoiced rows for {COMPANY_ID}")
 
-    remaining = get_items_for_company(COMPANY_ID)
-    print(f"  -> Remaining rows: {len(remaining)}")
+    remaining_items, _ = get_items_for_company(COMPANY_ID)
+    print(f"  -> Remaining rows: {len(remaining_items)}")
 except Exception as e:
     print(f"  -> FossBilling call failed: {e}")
     print("  -> MySQL rows NOT cleared (invoice was not created)")
