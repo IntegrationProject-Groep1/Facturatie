@@ -1,5 +1,6 @@
 # Python Virtual Environment (De map 'venv' die je net maakte)
 venv/
+.venv/
 env/
 ENV/
 __pycache__/
