@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 import os
+import logging
 from src.services.rabbitmq_utils import get_connection
 
 # Load environment variables from the .env file
@@ -112,15 +113,19 @@ def build_invoice_created_notification_xml(
     recipient_email: str,
     subject: str = "Uw nieuwe factuur",
     message_text: str = "Beste klant, uw factuur staat klaar.",
-    source: str = "facturatie_system",
+    source: str = "facturatie",
 ) -> str:
     """
     Builds an invoice_created_notification XML message to be sent to the Mailing team.
     """
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    billing_base = os.getenv("BILLING_API_URL", "").rsplit("/api", 1)[0]
-    pdf_url = f"{billing_base}/invoices/{invoice_id}.pdf"
+    billing_web_base = os.getenv("BILLING_WEB_URL")
+    if not billing_web_base:
+        logging.error("BILLING_WEB_URL is not set! PDF links will be broken.")
+        billing_web_base = "https://portal.yourdomain.com"
+
+    pdf_url = f"{billing_web_base.rstrip('/')}/invoice/{invoice_id}"
 
     root = ET.Element("message")
 
