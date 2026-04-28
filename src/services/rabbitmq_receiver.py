@@ -242,12 +242,16 @@ def process_message(
                     consumption_store.clear_by_ids(row_ids)
 
                     try:
+                        billing_url = os.getenv('BILLING_WEB_URL', 'https://portal.yourdomain.com').rstrip('/')
+                        pdf_url = f"{billing_url}/invoice/{invoice_id}"
+
                         notification_xml = build_invoice_created_notification_xml(
                             invoice_id=invoice_id,
                             recipient_email=meta["email"],
+                            master_uuid=master_uuid,
                             subject=f"Uw factuur {invoice_id} staat klaar",
                             message_text="Bedankt voor uw gebruik van onze diensten. In de bijlage vindt u de details.",
-                            pdf_url=f"{os.getenv('BILLING_WEB_URL', 'https://portal.yourdomain.com').rstrip('/')}/invoice/{invoice_id}"
+                            pdf_url=pdf_url
                         )
                         send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
                     except Exception as mail_err:

@@ -144,7 +144,6 @@ def build_invoice_created_notification_xml(
     ET.SubElement(header, "type").text = "invoice_created_notification"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
-    ET.SubElement(header, "correlation_id").text = correlation_id
     ET.SubElement(header, "master_uuid").text = master_uuid
 
     body = ET.SubElement(root, "body")

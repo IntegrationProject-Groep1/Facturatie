@@ -31,29 +31,24 @@ def test_recipient_email() -> None:
 
 def test_invoice_request_master_uuid() -> None:
     """master_uuid must be present in the header."""
-    root = parse(build_invoice_request_xml(INVOICE_ID, CLIENT_EMAIL, CORRELATION_ID, MASTER_UUID))
+    root = parse(build_invoice_created_notification_xml(INVOICE_ID, RECIPIENT_EMAIL, MASTER_UUID))
     assert root.findtext("header/master_uuid") == MASTER_UUID
 
 def test_invoice_id() -> None:
     root = parse(build_invoice_created_notification_xml(INVOICE_ID, RECIPIENT_EMAIL, MASTER_UUID))
     assert root.findtext("body/invoice_id") == INVOICE_ID
-    
-    
-def test_recipient_email() -> None:
-    root = parse(build_invoice_created_notification_xml(INVOICE_ID, RECIPIENT_EMAIL, MASTER_UUID))
-    assert root.findtext("body/recipient_email") == RECIPIENT_EMAIL
-    
+
 
 def test_pdf_url_format() -> None:
     root = parse(build_invoice_created_notification_xml(INVOICE_ID, RECIPIENT_EMAIL, MASTER_UUID))
     pdf_url = root.findtext("body/pdf_url")
     assert pdf_url == f'https://portal.yourdomain.com/invoice/{INVOICE_ID}'
-    
-    
+
+
 def test_master_uuid_in_header() -> None:
     root = parse(build_invoice_created_notification_xml(INVOICE_ID, RECIPIENT_EMAIL, MASTER_UUID))
     assert root.findtext("header/master_uuid") == MASTER_UUID
-    
+
 
 def test_message_id_is_uuid() -> None:
     root = parse(build_invoice_created_notification_xml(INVOICE_ID, RECIPIENT_EMAIL, MASTER_UUID))
@@ -64,9 +59,9 @@ def test_message_id_is_uuid() -> None:
 def test_no_correlation_id_in_header() -> None:
     root = parse(build_invoice_created_notification_xml(INVOICE_ID, RECIPIENT_EMAIL, MASTER_UUID))
     assert root.findtext("header/correlation_id") is None
-    
-    
+
+
 def test_invoice_request_source() -> None:
     """source must default to facturatie."""
-    root = parse(build_invoice_request_xml(INVOICE_ID, RECIPIENT_EMAIL, MASTER_UUID))
+    root = parse(build_invoice_created_notification_xml(INVOICE_ID, RECIPIENT_EMAIL, MASTER_UUID))
     assert root.findtext("header/source") == "facturatie"
