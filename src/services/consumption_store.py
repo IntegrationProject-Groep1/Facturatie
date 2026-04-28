@@ -23,15 +23,17 @@ def init_db() -> None:
         with conn.cursor() as cursor:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pending_consumptions (
-                    id          INT AUTO_INCREMENT PRIMARY KEY,
-                    company_id  VARCHAR(100) NOT NULL,
-                    badge_id    VARCHAR(100) NOT NULL,
-                    master_uuid VARCHAR(36)  NOT NULL,
-                    description VARCHAR(255) NOT NULL,
-                    price       DECIMAL(10,2) NOT NULL,
-                    quantity    INT          NOT NULL DEFAULT 1,
-                    vat_rate    VARCHAR(10),
-                    received_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    company_id   VARCHAR(100) NOT NULL,
+                    company_name VARCHAR(255) NOT NULL DEFAULT '',
+                    email        VARCHAR(255) NOT NULL DEFAULT '',
+                    badge_id     VARCHAR(100) NOT NULL,
+                    master_uuid  VARCHAR(36)  NOT NULL,
+                    description  VARCHAR(255) NOT NULL,
+                    price        DECIMAL(10,2) NOT NULL,
+                    quantity     INT          NOT NULL DEFAULT 1,
+                    vat_rate     VARCHAR(10),
+                    received_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_company_id  (company_id),
                     INDEX idx_master_uuid (master_uuid)
                 )
@@ -42,16 +44,23 @@ def init_db() -> None:
     logging.info("[DB] pending_consumptions table ready")
 
 
-def save_items(company_id: str, badge_id: str, master_uuid: str, items: list[dict]) -> None:
+def save_items(
+    company_id: str,
+    badge_id: str,
+    master_uuid: str,
+    items: list[dict],
+    email: str = "",
+    company_name: str = "",
+) -> None:
     """Stores consumption items in MySQL for later invoicing."""
     query = """
         INSERT INTO pending_consumptions
-            (company_id, badge_id, master_uuid, description, price, quantity, vat_rate)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (company_id, company_name, email, badge_id, master_uuid, description, price, quantity, vat_rate)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     data = [
-        (company_id, badge_id, master_uuid, i["description"], i["price"],
-         i.get("quantity", 1), i.get("vat_rate", ""))
+        (company_id, company_name, email, badge_id, master_uuid,
+         i["description"], i["price"], i.get("quantity", 1), i.get("vat_rate", ""))
         for i in items
     ]
     conn = _get_connection()
@@ -74,6 +83,23 @@ def get_pending_company_ids() -> list[str]:
     finally:
         conn.close()
     return companies
+
+
+def get_company_meta(company_id: str) -> dict:
+    """Returns email and company_name for a company from the first pending row."""
+    conn = _get_connection()
+    try:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute(
+                "SELECT email, company_name FROM pending_consumptions WHERE company_id = %s LIMIT 1",
+                (company_id,),
+            )
+            row = cursor.fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return {"email": "", "company_name": ""}
+    return {"email": row["email"], "company_name": row["company_name"]}
 
 
 def get_items_for_company(company_id: str) -> list[dict]:

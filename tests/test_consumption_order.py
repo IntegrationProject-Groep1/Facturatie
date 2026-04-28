@@ -1,10 +1,10 @@
 """
-Tests for the consumption_order message processing flow.
+Tests for the invoice_request message processing flow (consumption orders).
 
 Covers:
  - fossbilling_api: get_client_by_company_id, get_unpaid_invoice_for_client,
    add_item_to_invoice, process_consumption_order
- - rabbitmq_receiver: process_message handler for consumption_order
+ - rabbitmq_receiver: process_message handler for invoice_request and event_ended
 """
 
 import xml.etree.ElementTree as ET
@@ -23,40 +23,43 @@ from src.services.fossbilling_api import (
 )
 
 
-# ── XML builder helper ────────────────────────────────────────────────────────
+# ── XML builder helpers ───────────────────────────────────────────────────────
 
 def _build_xml(
     msg_id: str = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5",
+    master_uuid: str = "11111111-1111-4111-1111-111111111100",
     is_company_linked: bool = True,
     company_id: str = "FOSS-CUST-102",
     company_name: str = "Bedrijf NV",
     customer_id: str = "BADGE-007",
     email: str = "info@bedrijf.be",
-    payment_method: str = "company_link",
     items: list | None = None,
 ) -> bytes:
-    """Builds a valid consumption_order XML message as bytes."""
+    """Builds a valid invoice_request XML message as bytes."""
     if items is None:
-        items = [{"id": "BEV-001", "description": "Coca-Cola", "quantity": 1, "unit_price": "2.50", "vat_rate": "21"}]
+        items = [{"description": "Coca-Cola", "quantity": 1, "unit_price": "2.50", "vat_rate": "21"}]
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     root = ET.Element("message")
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
+    ET.SubElement(header, "master_uuid").text = master_uuid
     ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "consumption_order"
+    ET.SubElement(header, "type").text = "invoice_request"
     ET.SubElement(header, "timestamp").text = timestamp
-    ET.SubElement(header, "source").text = "kassa_bar_01"
+    ET.SubElement(header, "source").text = "crm"
 
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")
-    ET.SubElement(customer, "id").text = customer_id
+    ET.SubElement(customer, "customer_id").text = customer_id
+    ET.SubElement(customer, "email").text = email
+    ET.SubElement(customer, "first_name").text = "Test"
+    ET.SubElement(customer, "last_name").text = "User"
     ET.SubElement(customer, "is_company_linked").text = "true" if is_company_linked else "false"
     if is_company_linked:
         ET.SubElement(customer, "company_id").text = company_id
         ET.SubElement(customer, "company_name").text = company_name
-    ET.SubElement(customer, "email").text = email
     addr = ET.SubElement(customer, "address")
     ET.SubElement(addr, "street").text = "Teststraat"
     ET.SubElement(addr, "number").text = "1"
@@ -64,18 +67,48 @@ def _build_xml(
     ET.SubElement(addr, "city").text = "Brussel"
     ET.SubElement(addr, "country").text = "be"
 
-    ET.SubElement(body, "payment_method").text = payment_method
+    invoice_el = ET.SubElement(body, "invoice")
+    ET.SubElement(invoice_el, "description").text = "Consumptions"
+    amount_el = ET.SubElement(invoice_el, "amount")
+    amount_el.text = "0.00"
+    amount_el.set("currency", "eur")
+    ET.SubElement(invoice_el, "due_date").text = "2026-12-31"
 
     items_el = ET.SubElement(body, "items")
     for item in items:
         item_el = ET.SubElement(items_el, "item")
-        ET.SubElement(item_el, "id").text = item["id"]
         ET.SubElement(item_el, "description").text = item["description"]
         ET.SubElement(item_el, "quantity").text = str(item["quantity"])
         price_el = ET.SubElement(item_el, "unit_price")
         price_el.text = item["unit_price"]
         price_el.set("currency", "eur")
         ET.SubElement(item_el, "vat_rate").text = str(item["vat_rate"])
+
+    ET.indent(root, space="    ")
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    ).encode("utf-8")
+
+
+def _build_event_ended_xml(
+    msg_id: str = "eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee",
+    session_id: str = "SESSION-001",
+) -> bytes:
+    """Builds a valid event_ended XML message as bytes."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = msg_id
+    ET.SubElement(header, "version").text = "2.0"
+    ET.SubElement(header, "type").text = "event_ended"
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = "frontend"
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "session_id").text = session_id
+    ET.SubElement(body, "ended_at").text = timestamp
 
     ET.indent(root, space="    ")
     return (
@@ -220,12 +253,12 @@ class TestProcessConsumptionOrder:
                 process_consumption_order("FOSS-CUST-102", self.ITEMS)
 
 
-# ── process_message: consumption_order handler ────────────────────────────────
+# ── process_message: invoice_request handler ──────────────────────────────────
 
 class TestProcessMessageConsumptionOrder:
 
     def test_happy_path_acks_message(self):
-        """Valid company-linked message → saved to DB and acknowledged."""
+        """Valid company-linked invoice_request -> saved to DB and acknowledged."""
         channel = MagicMock()
         body = _build_xml(msg_id="11111111-1111-4111-1111-111111111111")
 
@@ -255,16 +288,33 @@ class TestProcessMessageConsumptionOrder:
         assert "FOSS-CUST-102" in str(args)
         assert "BADGE-007" in str(args)
 
-    def test_item_description_saved_without_badge_in_title(self):
-        """Raw description is saved to DB; badge is added later when invoice is created."""
+    def test_master_uuid_read_from_header(self):
+        """master_uuid must be read from header, not derived from badge_id."""
         channel = MagicMock()
         body = _build_xml(
-            msg_id="22222222-2222-4222-2222-222222222222",
-            customer_id="BADGE-007",
+            msg_id="11111111-1111-4111-1111-111111111113",
+            master_uuid="aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
         )
         captured = {}
 
-        def capture(company_id, badge_id, master_uuid, items):
+        def capture(company_id, badge_id, master_uuid, items, email="", company_name=""):
+            captured["master_uuid"] = master_uuid
+
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.consumption_store.save_items",
+                   side_effect=capture):
+            process_message(channel, _make_method(), MagicMock(), body)
+
+        assert captured["master_uuid"] == "aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee"
+
+    def test_item_description_saved_without_badge_in_title(self):
+        """Raw description is saved to DB; badge is added later when invoice is created."""
+        channel = MagicMock()
+        body = _build_xml(msg_id="22222222-2222-4222-2222-222222222222", customer_id="BADGE-007")
+        captured = {}
+
+        def capture(company_id, badge_id, master_uuid, items, email="", company_name=""):
             captured["items"] = items
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
@@ -280,14 +330,13 @@ class TestProcessMessageConsumptionOrder:
         """All items in the message must be saved to the DB."""
         channel = MagicMock()
         items = [
-            {"id": "BEV-001", "description": "Coca-Cola", "quantity": 2, "unit_price": "2.50", "vat_rate": "21"},
-            {"id": "BEV-002", "description": "Water", "quantity": 1, "unit_price": "1.50", "vat_rate": "6"},
+            {"description": "Coca-Cola", "quantity": 2, "unit_price": "2.50", "vat_rate": "21"},
+            {"description": "Water", "quantity": 1, "unit_price": "1.50", "vat_rate": "6"},
         ]
         body = _build_xml(msg_id="33333333-3333-4333-3333-333333333333", items=items)
-
         captured = {}
 
-        def capture(company_id, badge_id, master_uuid, saved_items):
+        def capture(company_id, badge_id, master_uuid, saved_items, email="", company_name=""):
             captured["items"] = saved_items
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
@@ -299,7 +348,7 @@ class TestProcessMessageConsumptionOrder:
         assert len(captured["items"]) == 2
 
     def test_db_failure_sends_to_dlq(self):
-        """DB save error → DLQ and nack."""
+        """DB save error -> DLQ and nack."""
         channel = MagicMock()
         body = _build_xml(msg_id="44444444-4444-4444-4444-444444444444")
 
@@ -313,7 +362,7 @@ class TestProcessMessageConsumptionOrder:
         channel.basic_publish.assert_called_once()
 
     def test_duplicate_message_is_skipped(self):
-        """Duplicate message_id → acknowledged without saving to DB."""
+        """Duplicate message_id -> acknowledged without saving to DB."""
         channel = MagicMock()
         body = _build_xml(msg_id="55555555-5555-4555-5555-555555555555")
 
@@ -325,13 +374,13 @@ class TestProcessMessageConsumptionOrder:
         channel.basic_ack.assert_called_once_with(delivery_tag=1)
 
     def test_invalid_xml_sends_to_dlq(self):
-        """Malformed XML → DLQ and nack without processing."""
+        """Malformed XML -> DLQ and nack without processing."""
         channel = MagicMock()
         process_message(channel, _make_method(), MagicMock(), b"<not valid xml")
         channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
 
     def test_xsd_validation_failure_sends_to_dlq(self):
-        """XSD-invalid message → DLQ and nack."""
+        """XSD-invalid message -> DLQ and nack."""
         channel = MagicMock()
         body = _build_xml(msg_id="66666666-6666-4666-6666-666666666666")
 
@@ -341,3 +390,88 @@ class TestProcessMessageConsumptionOrder:
             process_message(channel, _make_method(), MagicMock(), body)
 
         channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
+
+
+# ── process_message: event_ended handler ─────────────────────────────────────
+
+class TestProcessMessageEventEnded:
+
+    def test_happy_path_creates_invoices_and_acks(self):
+        """event_ended with pending items -> invoice created per company, ack."""
+        channel = MagicMock()
+        body = _build_event_ended_xml()
+
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.consumption_store.get_pending_company_ids",
+                   return_value=["FOSS-CUST-102"]), \
+             patch("src.services.rabbitmq_receiver.consumption_store.get_items_for_company",
+                   return_value=[
+                       {"title": "Coca-Cola (badge: B1)", "price": "2.50", "quantity": 1, "vat_rate": "21"},
+                   ]), \
+             patch("src.services.rabbitmq_receiver.consumption_store.get_company_meta",
+                   return_value={"email": "info@bedrijf.be", "company_name": "Bedrijf NV"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
+                   return_value="INV-2026-001"), \
+             patch("src.services.rabbitmq_receiver.send_message"), \
+             patch("src.services.rabbitmq_receiver.consumption_store.clear_company"):
+            process_message(channel, _make_method(), MagicMock(), body)
+
+        channel.basic_ack.assert_called_once_with(delivery_tag=1)
+        channel.basic_nack.assert_not_called()
+
+    def test_no_pending_companies_acks_immediately(self):
+        """event_ended with no pending items -> ack without calling FossBilling."""
+        channel = MagicMock()
+        body = _build_event_ended_xml()
+
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.consumption_store.get_pending_company_ids",
+                   return_value=[]), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order") as mock_fb:
+            process_message(channel, _make_method(), MagicMock(), body)
+
+        mock_fb.assert_not_called()
+        channel.basic_ack.assert_called_once_with(delivery_tag=1)
+
+    def test_fossbilling_failure_sends_to_dlq(self):
+        """FossBilling failure for a company -> DLQ and nack."""
+        channel = MagicMock()
+        body = _build_event_ended_xml()
+
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.consumption_store.get_pending_company_ids",
+                   return_value=["FOSS-CUST-102"]), \
+             patch("src.services.rabbitmq_receiver.consumption_store.get_items_for_company",
+                   return_value=[]), \
+             patch("src.services.rabbitmq_receiver.consumption_store.get_company_meta",
+                   return_value={"email": "", "company_name": ""}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
+                   side_effect=Exception("API timeout")):
+            process_message(channel, _make_method(), MagicMock(), body)
+
+        channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
+        channel.basic_publish.assert_called_once()
+
+    def test_clear_company_called_after_invoice(self):
+        """MySQL rows must be cleared after invoice is created."""
+        channel = MagicMock()
+        body = _build_event_ended_xml()
+
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.consumption_store.get_pending_company_ids",
+                   return_value=["FOSS-CUST-102"]), \
+             patch("src.services.rabbitmq_receiver.consumption_store.get_items_for_company",
+                   return_value=[{"title": "Fanta", "price": "2.50", "quantity": 1, "vat_rate": "21"}]), \
+             patch("src.services.rabbitmq_receiver.consumption_store.get_company_meta",
+                   return_value={"email": "test@test.be", "company_name": "Test NV"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
+                   return_value="INV-001"), \
+             patch("src.services.rabbitmq_receiver.send_message"), \
+             patch("src.services.rabbitmq_receiver.consumption_store.clear_company") as mock_clear:
+            process_message(channel, _make_method(), MagicMock(), body)
+
+        mock_clear.assert_called_once_with("FOSS-CUST-102")
