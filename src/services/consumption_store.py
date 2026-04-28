@@ -50,11 +50,13 @@ def init_db() -> None:
                     INDEX idx_master_uuid (master_uuid)
                 )
             """)
-            # Migrate existing tables that predate the company_name / email columns
-            for col_name, col_def in [
+
+            migrations = [
                 ("company_name", "VARCHAR(255) NOT NULL DEFAULT ''"),
                 ("email", "VARCHAR(255) NOT NULL DEFAULT ''"),
-            ]:
+            ]
+
+            for col_name, col_def in migrations:
                 cursor.execute(
                     "SELECT COUNT(*) FROM information_schema.COLUMNS "
                     "WHERE TABLE_SCHEMA = DATABASE() "
@@ -63,10 +65,13 @@ def init_db() -> None:
                     (col_name,),
                 )
                 if cursor.fetchone()[0] == 0:
-                    cursor.execute(
-                        f"ALTER TABLE pending_consumptions ADD COLUMN {col_name} {col_def}"
-                    )
+                    cursor.execute(f"ALTER TABLE pending_consumptions ADD COLUMN {col_name} {col_def}")
+                    logging.info(f"[DB] Migration: Added column {col_name} to pending_consumptions")
+
         conn.commit()
+    except Exception as e:
+        logging.error(f"[DB] Error initializing database: {e}")
+        raise
     finally:
         conn.close()
     logging.info("[DB] pending_consumptions table ready")
@@ -131,12 +136,7 @@ def get_company_meta(company_id: str) -> dict:
 
 
 def get_items_for_company(company_id: str) -> tuple[list[dict], list[int]]:
-    """Returns (items, row_ids) for a company.
-
-    items   — formatted for FossBilling invoice creation
-    row_ids — the exact DB row IDs that were fetched, used by clear_by_ids()
-              to avoid deleting rows that arrived after this snapshot was taken.
-    """
+    """Returns (items, row_ids) for a company to prevent race conditions."""
     conn = _get_connection()
     try:
         with conn.cursor(dictionary=True) as cursor:
@@ -162,22 +162,17 @@ def get_items_for_company(company_id: str) -> tuple[list[dict], list[int]]:
 
 
 def clear_by_ids(row_ids: list[int]) -> None:
-    """Deletes only the specific rows that were included in the invoice.
-
-    Using explicit IDs instead of company_id prevents accidentally deleting
-    items that arrived between get_items_for_company() and this call.
-    """
+    """Deletes only the specific processed rows by their database IDs."""
     if not row_ids:
         return
-    placeholders = ", ".join(["%s"] * len(row_ids))
+
     conn = _get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                f"DELETE FROM pending_consumptions WHERE id IN ({placeholders})",
-                row_ids,
-            )
+            placeholders = ', '.join(['%s'] * len(row_ids))
+            query = f"DELETE FROM pending_consumptions WHERE id IN ({placeholders})"
+            cursor.execute(query, tuple(row_ids))
         conn.commit()
+        logging.info(f"[DB] Cleared {len(row_ids)} processed rows.")
     finally:
         conn.close()
-    logging.info("[DB] Cleared %d invoiced rows", len(row_ids))

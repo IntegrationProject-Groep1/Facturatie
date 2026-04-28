@@ -221,18 +221,27 @@ def process_message(
             for company_id in company_ids:
                 try:
                     items, row_ids = consumption_store.get_items_for_company(company_id)
+                    if not items:
+                        continue
                     meta = consumption_store.get_company_meta(company_id)
                     invoice_id = fossbilling_client.process_consumption_order(company_id, items)
-                    invoice_xml = build_invoice_request_xml(
-                        invoice_id=invoice_id,
-                        client_email=meta["email"],
-                        correlation_id=msg_id,
-                        company_name=meta["company_name"],
-                    )
-                    send_message(invoice_xml, routing_key="facturatie.to.mailing", channel=channel)
+
                     consumption_store.clear_by_ids(row_ids)
+
+                    try:
+                        invoice_xml = build_invoice_request_xml(
+                            invoice_id=invoice_id,
+                            client_email=meta["email"],
+                            correlation_id=msg_id,
+                            company_name=meta["company_name"],
+                        )
+                        send_message(invoice_xml, routing_key="facturatie.to.mailing", channel=channel)
+                    except Exception as mail_err:
+                        # We loggen de mail fout, maar gaan door (de factuur is immers al klaar)
+                        logging.warning("[RECEIVER] Invoice created but mail failed for %s: %s", company_id, mail_err)
+
                     logging.info(
-                        "[RECEIVER] event_ended: invoice sent | company_id=%s | invoice_id=%s",
+                        "[RECEIVER] event_ended: invoice processed | company_id=%s | invoice_id=%s",
                         company_id, invoice_id,
                     )
                 except Exception as e:
