@@ -41,9 +41,10 @@ def test_message_text_present() -> None:
     assert root.findtext("body/message_text") is not None
 
 
-def test_pdf_url_contains_invoice_id() -> None:
+def test_pdf_url_format() -> None:
     root = parse(build_invoice_created_notification_xml(INVOICE_ID, RECIPIENT_EMAIL))
-    assert INVOICE_ID in root.findtext("body/pdf_url")
+    pdf_url = root.findtext("body/pdf_url")
+    assert f"/invoices/{INVOICE_ID}.pdf" in pdf_url
 
 
 def test_message_id_is_uuid() -> None:

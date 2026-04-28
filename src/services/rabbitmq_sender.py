@@ -120,7 +120,7 @@ def build_invoice_created_notification_xml(
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     billing_base = os.getenv("BILLING_API_URL", "").rsplit("/api", 1)[0]
-    pdf_url = f"{billing_base}/invoice/{invoice_id}"
+    pdf_url = f"{billing_base}/invoices/{invoice_id}.pdf"
 
     root = ET.Element("message")
 
