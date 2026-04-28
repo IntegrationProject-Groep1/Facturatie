@@ -5,20 +5,20 @@ from src.utils.xml_validator import validate_xml
 
 
 def build_xml(
-    msg_type: str = "invoice_request", # Veranderd van consumption_order
+    msg_type: str = "invoice_request",
     msg_id: str = "f47ac10b-58cc-4372-a567-0e02b2c3d479",
     version: str = "2.0",
     timestamp: str = "2026-02-24T18:30:00Z",
     source: str = "kassa_bar_01",
     is_company_linked: str = "false",
     vat_rate: str = "21",
-    correlation_id: str = None
+    correlation_id: str | None = None,
 ) -> str:
     root = ET.Element("message")
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
-    ET.SubElement(header, "master_uuid").text = "01890a5d-ac96-7ab2-80e2-4536629c90de" # TOEVOEGEN
+    ET.SubElement(header, "master_uuid").text = "01890a5d-ac96-7ab2-80e2-4536629c90de"
     ET.SubElement(header, "version").text = version
     ET.SubElement(header, "type").text = "invoice_request"
     ET.SubElement(header, "timestamp").text = timestamp
@@ -74,7 +74,6 @@ def build_registration_xml(
     """Builds a valid new_registration XML string according to the latest XSD."""
     root = ET.Element("message")
 
-    # --- HEADER (Volgorde: message_id -> master_uuid -> version -> type -> timestamp -> source) ---
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
     ET.SubElement(header, "master_uuid").text = "01890a5d-ac96-7ab2-80e2-4536629c90de"
@@ -85,9 +84,8 @@ def build_registration_xml(
 
     body = ET.SubElement(root, "body")
 
-    # --- CUSTOMER (Volgorde: customer_id -> email -> first_name -> last_name -> is_company_linked -> company_id? -> company_name? -> address) ---
     customer = ET.SubElement(body, "customer")
-    ET.SubElement(customer, "customer_id").text = "REG-999" # 'id' vervangen door 'customer_id'
+    ET.SubElement(customer, "customer_id").text = "REG-999"
 
     if email is not None:
         ET.SubElement(customer, "email").text = email
@@ -184,6 +182,7 @@ def test_valid_event_ended() -> None:
     xml = build_event_ended_xml()
     is_valid, errors = validate_xml(xml, "event_ended")
     assert is_valid is True, f"Event Ended validation failed: {errors}"
+
 
 def test_event_ended_invalid_date() -> None:
     xml = build_event_ended_xml(timestamp="NIET-EEN-DATUM")

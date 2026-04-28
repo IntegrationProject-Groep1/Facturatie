@@ -19,8 +19,8 @@ from src.services import consumption_store
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
 VALID_TYPES: set[str] = {
-    "consumption_order", "payment_registered",
-    "heartbeat", "new_registration", "invoice_request", "invoice_cancelled"
+    "payment_registered", "heartbeat", "new_registration",
+    "invoice_request", "invoice_cancelled", "event_ended"
 }
 VALID_VAT_RATES: set[str] = {"6", "12", "21"}
 VALID_PAYMENT_METHODS: set[str] = {"company_link", "on_site", "online"}
@@ -97,7 +97,7 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
 def process_message(
     channel: pika.channel.Channel,
     method: pika.spec.Basic.Deliver,
-    properties: pika.spec.BasicProperties,
+    _properties: pika.spec.BasicProperties,
     body: bytes
 ) -> None:
     print("\n[RECEIVER] Message received")
@@ -184,34 +184,93 @@ def process_message(
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
     elif msg_type == "invoice_request":
-        data = extract_invoice_request_data(root)
-        try:
-            # FIX: We map data from the ‘items’ list to the fields
-            # that create_registration_invoice expects.
-            customer_payload = data["customer"]
-            if data["items"]:
-                # Set the price of the first item as 'registration_fee'
-                customer_payload["registration_fee"] = data["items"][0]["price"]
-                customer_payload["fee_currency"] = data["items"][0]["currency"]
+        is_company_linked = root.findtext("body/customer/is_company_linked") == "true"
+        company_id = root.findtext("body/customer/company_id")
+        badge_id = root.findtext("body/customer/customer_id") or ""
+        master_uuid = root.findtext("header/master_uuid") or badge_id
+        email = root.findtext("body/customer/email") or ""
+        company_name = root.findtext("body/customer/company_name") or ""
 
-            # Only call this now: the retry logic and the data structure are now working
-            invoice_id = create_registration_invoice(customer_payload)
-
-        except Exception as e:
-            print(f"[RECEIVER] ERROR: fossbilling_failed: {e}")
-            send_to_dlq(channel, body, [f"ERROR: fossbilling_failed: {e}"])
+        if not is_company_linked or not company_id:
+            send_to_dlq(channel, body, ["ERROR: invoice_request requires is_company=true and company_id"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        invoice_xml = build_invoice_request_xml(
-            invoice_id=invoice_id,
-            client_email=data["customer"]["email"],
-            correlation_id=msg_id,
-            company_name=data["customer"].get("company_name", ""),
-        )
-        send_message(invoice_xml, routing_key="facturatie.to.mailing", channel=channel)
-        print(f"[RECEIVER] invoice sent | invoice_id={invoice_id} | correlation_id={msg_id}")
-        channel.basic_ack(delivery_tag=method.delivery_tag)
+        items = []
+        for item_el in root.findall("body/items/item"):
+            description = item_el.findtext("description") or ""
+            unit_price_el = item_el.find("unit_price")
+            items.append({
+                "description": description,
+                "price": unit_price_el.text if unit_price_el is not None else "0",
+                "quantity": int(item_el.findtext("quantity") or 1),
+                "vat_rate": item_el.findtext("vat_rate") or "",
+            })
+
+        try:
+            consumption_store.save_items(company_id, badge_id, master_uuid, items, email, company_name)
+            logging.info(
+                "[RECEIVER] invoice_request saved | company_id=%s | badge_id=%s | items=%d",
+                company_id, badge_id, len(items),
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+        except Exception as e:
+            logging.error("[RECEIVER] ERROR: invoice_request_save_failed: %s", e)
+            send_to_dlq(channel, body, [f"ERROR: invoice_request_save_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+    elif msg_type == "event_ended":
+        session_id = root.findtext("body/session_id") or ""
+        logging.info("[RECEIVER] event_ended | session_id=%s", session_id)
+
+        try:
+            company_ids = consumption_store.get_pending_company_ids()
+            if not company_ids:
+                logging.info("[RECEIVER] event_ended: no pending consumptions")
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+                return
+
+            errors = []
+            for company_id in company_ids:
+                try:
+                    items, row_ids = consumption_store.get_items_for_company(company_id)
+                    if not items:
+                        continue
+                    meta = consumption_store.get_company_meta(company_id)
+                    invoice_id = fossbilling_client.process_consumption_order(company_id, items)
+
+                    consumption_store.clear_by_ids(row_ids)
+
+                    try:
+                        invoice_xml = build_invoice_request_xml(
+                            invoice_id=invoice_id,
+                            client_email=meta["email"],
+                            correlation_id=msg_id,
+                            company_name=meta["company_name"],
+                        )
+                        send_message(invoice_xml, routing_key="facturatie.to.mailing", channel=channel)
+                    except Exception as mail_err:
+                        # We loggen de mail fout, maar gaan door (de factuur is immers al klaar)
+                        logging.warning("[RECEIVER] Invoice created but mail failed for %s: %s", company_id, mail_err)
+
+                    logging.info(
+                        "[RECEIVER] event_ended: invoice processed | company_id=%s | invoice_id=%s",
+                        company_id, invoice_id,
+                    )
+                except Exception as e:
+                    logging.error("[RECEIVER] event_ended: failed for company_id=%s: %s", company_id, e)
+                    errors.append(f"company_id={company_id}: {e}")
+
+            if errors:
+                send_to_dlq(channel, body, [f"ERROR: event_ended partial failure: {'; '.join(errors)}"])
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            else:
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+
+        except Exception as e:
+            logging.error("[RECEIVER] ERROR: event_ended_failed: %s", e)
+            send_to_dlq(channel, body, [f"ERROR: event_ended_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     elif msg_type == "payment_registered":
         print("[RECEIVER] Handling payment_registered")
@@ -346,40 +405,6 @@ def process_message(
         crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
-
-    elif msg_type == "consumption_order":
-        is_company_linked = root.findtext("body/customer/is_company_linked") == "true"
-        company_id = root.findtext("body/customer/company_id")
-        badge_id = root.findtext("body/customer/id") or ""
-        master_uuid = badge_id
-
-        if not is_company_linked or not company_id:
-            send_to_dlq(channel, body, ["ERROR: consumption_order requires is_company_linked=true and company_id"])
-            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-            return
-
-        items = []
-        for item_el in root.findall("body/items/item"):
-            description = item_el.findtext("description") or ""
-            unit_price_el = item_el.find("unit_price")
-            items.append({
-                "description": description,
-                "price": unit_price_el.text if unit_price_el is not None else "0",
-                "quantity": int(item_el.findtext("quantity") or 1),
-                "vat_rate": item_el.findtext("vat_rate") or "",
-            })
-
-        try:
-            consumption_store.save_items(company_id, badge_id, master_uuid, items)
-            logging.info(
-                "[RECEIVER] consumption_order saved | company_id=%s | badge_id=%s | items=%d",
-                company_id, badge_id, len(items),
-            )
-            channel.basic_ack(delivery_tag=method.delivery_tag)
-        except Exception as e:
-            logging.error("[RECEIVER] ERROR: consumption_order_save_failed: %s", e)
-            send_to_dlq(channel, body, [f"ERROR: consumption_order_save_failed: {e}"])
-            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     else:
         print(f"[RECEIVER] No handler for type '{msg_type}' — acknowledging")
