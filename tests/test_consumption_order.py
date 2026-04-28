@@ -165,7 +165,10 @@ class TestAddItemToInvoice:
     def test_sends_invoice_id_in_payload(self):
         with patch("src.services.fossbilling_api.requests.post",
                    return_value=_mock_response(True)) as mock_post:
-            add_item_to_invoice("INV-2026-001", {"title": "Coca-Cola (badge: BADGE-007)", "price": "2.50", "quantity": 1})
+            add_item_to_invoice(
+                "INV-2026-001",
+                {"title": "Coca-Cola (badge: BADGE-007)", "price": "2.50", "quantity": 1},
+            )
         payload = mock_post.call_args.kwargs.get("data") or mock_post.call_args[1]["data"]
         assert payload.get("id") == "INV-2026-001"
 
@@ -189,23 +192,11 @@ class TestAddItemToInvoice:
 class TestProcessConsumptionOrder:
     ITEMS = [{"title": "Coca-Cola (badge: BADGE-007)", "price": "2.50", "quantity": 1, "vat_rate": "21"}]
 
-    def test_adds_items_to_existing_invoice(self):
+    def test_creates_invoice_with_all_items(self):
         with patch("src.services.fossbilling_api.get_client_by_company_id", return_value=42), \
-             patch("src.services.fossbilling_api.get_unpaid_invoice_for_client", return_value="INV-2026-001"), \
-             patch("src.services.fossbilling_api.add_item_to_invoice") as mock_add, \
-             patch("src.services.fossbilling_api._create_invoice") as mock_create:
+             patch("src.services.fossbilling_api._create_invoice", return_value="INV-2026-001") as mock_create:
             result = process_consumption_order("FOSS-CUST-102", self.ITEMS)
         assert result == "INV-2026-001"
-        mock_add.assert_called_once()
-        mock_create.assert_not_called()
-
-    def test_creates_new_invoice_when_none_exists(self):
-        with patch("src.services.fossbilling_api.get_client_by_company_id", return_value=42), \
-             patch("src.services.fossbilling_api.get_unpaid_invoice_for_client", return_value=None), \
-             patch("src.services.fossbilling_api._create_invoice", return_value="INV-2026-NEW") as mock_create, \
-             patch("src.services.fossbilling_api.add_item_to_invoice"):
-            result = process_consumption_order("FOSS-CUST-102", self.ITEMS)
-        assert result == "INV-2026-NEW"
         mock_create.assert_called_once_with(42, self.ITEMS)
 
     def test_raises_when_company_not_found(self):
@@ -213,22 +204,10 @@ class TestProcessConsumptionOrder:
             with pytest.raises(Exception, match="company_id"):
                 process_consumption_order("FOSS-CUST-UNKNOWN", self.ITEMS)
 
-    def test_adds_all_items_to_existing_invoice(self):
-        items = [
-            {"title": "Coca-Cola (badge: BADGE-007)", "price": "2.50", "quantity": 1, "vat_rate": "21"},
-            {"title": "Water (badge: BADGE-007)", "price": "1.50", "quantity": 2, "vat_rate": "6"},
-        ]
-        with patch("src.services.fossbilling_api.get_client_by_company_id", return_value=42), \
-             patch("src.services.fossbilling_api.get_unpaid_invoice_for_client", return_value="INV-2026-001"), \
-             patch("src.services.fossbilling_api.add_item_to_invoice") as mock_add:
-            process_consumption_order("FOSS-CUST-102", items)
-        assert mock_add.call_count == 2
-
     def test_retries_on_transient_api_failure(self):
         with patch("src.services.fossbilling_api.get_client_by_company_id",
                    side_effect=[Exception("timeout"), 42]), \
-             patch("src.services.fossbilling_api.get_unpaid_invoice_for_client", return_value="INV-2026-001"), \
-             patch("src.services.fossbilling_api.add_item_to_invoice"), \
+             patch("src.services.fossbilling_api._create_invoice", return_value="INV-2026-001"), \
              patch("src.services.fossbilling_api.time.sleep"):
             result = process_consumption_order("FOSS-CUST-102", self.ITEMS)
         assert result == "INV-2026-001"
@@ -246,21 +225,20 @@ class TestProcessConsumptionOrder:
 class TestProcessMessageConsumptionOrder:
 
     def test_happy_path_acks_message(self):
-        """Valid company-linked message → processed and acknowledged."""
+        """Valid company-linked message → saved to DB and acknowledged."""
         channel = MagicMock()
         body = _build_xml(msg_id="11111111-1111-4111-1111-111111111111")
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
              patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-             patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
-                   return_value="INV-2026-001"):
+             patch("src.services.rabbitmq_receiver.consumption_store.save_items"):
             process_message(channel, _make_method(), MagicMock(), body)
 
         channel.basic_ack.assert_called_once_with(delivery_tag=1)
         channel.basic_nack.assert_not_called()
 
-    def test_company_id_and_badge_id_forwarded_to_fossbilling(self):
-        """company_id and badge ID from XML must reach process_consumption_order."""
+    def test_company_id_and_badge_id_saved_to_db(self):
+        """company_id and badge_id from XML must be passed to consumption_store."""
         channel = MagicMock()
         body = _build_xml(
             msg_id="11111111-1111-4111-1111-111111111112",
@@ -270,16 +248,15 @@ class TestProcessMessageConsumptionOrder:
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
              patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-             patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
-                   return_value="INV-2026-001") as mock_process:
+             patch("src.services.rabbitmq_receiver.consumption_store.save_items") as mock_save:
             process_message(channel, _make_method(), MagicMock(), body)
 
-        args = mock_process.call_args
+        args = mock_save.call_args
         assert "FOSS-CUST-102" in str(args)
         assert "BADGE-007" in str(args)
 
-    def test_item_title_includes_badge_id(self):
-        """Item description sent to FossBilling must contain the customer badge ID."""
+    def test_item_description_saved_without_badge_in_title(self):
+        """Raw description is saved to DB; badge is added later when invoice is created."""
         channel = MagicMock()
         body = _build_xml(
             msg_id="22222222-2222-4222-2222-222222222222",
@@ -287,21 +264,20 @@ class TestProcessMessageConsumptionOrder:
         )
         captured = {}
 
-        def capture(company_id, items):
+        def capture(company_id, badge_id, master_uuid, items):
             captured["items"] = items
-            return "INV-2026-001"
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
              patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-             patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
+             patch("src.services.rabbitmq_receiver.consumption_store.save_items",
                    side_effect=capture):
             process_message(channel, _make_method(), MagicMock(), body)
 
         assert len(captured["items"]) > 0
-        assert "BADGE-007" in captured["items"][0]["title"]
+        assert "description" in captured["items"][0]
 
-    def test_multiple_items_all_forwarded(self):
-        """All items in the message must reach FossBilling."""
+    def test_multiple_items_all_saved(self):
+        """All items in the message must be saved to the DB."""
         channel = MagicMock()
         items = [
             {"id": "BEV-001", "description": "Coca-Cola", "quantity": 2, "unit_price": "2.50", "vat_rate": "21"},
@@ -309,39 +285,43 @@ class TestProcessMessageConsumptionOrder:
         ]
         body = _build_xml(msg_id="33333333-3333-4333-3333-333333333333", items=items)
 
+        captured = {}
+
+        def capture(company_id, badge_id, master_uuid, saved_items):
+            captured["items"] = saved_items
+
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
              patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-             patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
-                   return_value="INV-2026-001") as mock_process:
+             patch("src.services.rabbitmq_receiver.consumption_store.save_items",
+                   side_effect=capture):
             process_message(channel, _make_method(), MagicMock(), body)
 
-        forwarded_items = mock_process.call_args[0][1]
-        assert len(forwarded_items) == 2
+        assert len(captured["items"]) == 2
 
-    def test_fossbilling_failure_sends_to_dlq(self):
-        """FossBilling error → DLQ and nack."""
+    def test_db_failure_sends_to_dlq(self):
+        """DB save error → DLQ and nack."""
         channel = MagicMock()
         body = _build_xml(msg_id="44444444-4444-4444-4444-444444444444")
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
              patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-             patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
-                   side_effect=Exception("FossBilling unreachable")):
+             patch("src.services.rabbitmq_receiver.consumption_store.save_items",
+                   side_effect=Exception("DB unreachable")):
             process_message(channel, _make_method(), MagicMock(), body)
 
         channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
         channel.basic_publish.assert_called_once()
 
     def test_duplicate_message_is_skipped(self):
-        """Duplicate message_id → acknowledged without calling FossBilling."""
+        """Duplicate message_id → acknowledged without saving to DB."""
         channel = MagicMock()
         body = _build_xml(msg_id="55555555-5555-4555-5555-555555555555")
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=True), \
-             patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order") as mock_process:
+             patch("src.services.rabbitmq_receiver.consumption_store.save_items") as mock_save:
             process_message(channel, _make_method(), MagicMock(), body)
 
-        mock_process.assert_not_called()
+        mock_save.assert_not_called()
         channel.basic_ack.assert_called_once_with(delivery_tag=1)
 
     def test_invalid_xml_sends_to_dlq(self):

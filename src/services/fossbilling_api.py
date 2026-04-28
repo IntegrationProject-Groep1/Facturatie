@@ -220,7 +220,8 @@ def add_item_to_invoice(invoice_id: str, item: dict) -> None:
 
 def process_consumption_order(company_id: str, items: list[dict]) -> str:
     """
-    Finds or creates an unpaid invoice for the given company and adds all items.
+    Creates one consolidated invoice for the given company with all provided items.
+    Called at event-end after items have been accumulated in MySQL.
     Returns the invoice_id.
     Raises ValueError immediately if company_id is not found.
     Raises Exception after MAX_RETRIES on transient API failures.
@@ -232,15 +233,8 @@ def process_consumption_order(company_id: str, items: list[dict]) -> str:
             if client_id is None:
                 raise ValueError(f"company_id '{company_id}' not found in FossBilling")
 
-            invoice_id = get_unpaid_invoice_for_client(client_id)
-            if invoice_id is None:
-                invoice_id = _create_invoice(client_id, items)
-                print(f"[FOSSBILLING] New invoice created | invoice_id={invoice_id} | company_id={company_id}")
-            else:
-                for item in items:
-                    add_item_to_invoice(invoice_id, item)
-                print(f"[FOSSBILLING] Items added to invoice | invoice_id={invoice_id} | company_id={company_id}")
-
+            invoice_id = _create_invoice(client_id, items)
+            print(f"[FOSSBILLING] Consolidated invoice created | invoice_id={invoice_id} | company_id={company_id}")
             return invoice_id
 
         except ValueError:
