@@ -172,7 +172,35 @@ pytest -v -m "not integration"
 
 ---
 
-## 8. Local end-to-end test
+## 8. Setup for teammates
+
+If you pulled this branch and want to run or test the service locally:
+
+**1. Copy the environment file**
+```bash
+cp .env.example .env
+```
+Fill in the correct values for `MYSQL_USER`, `MYSQL_PASSWORD`, `RABBITMQ_HOST`, etc.
+
+**2. Install dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+**3. Start MySQL**
+```bash
+docker compose up mysql -d
+```
+
+**4. The database table is created automatically**
+The `pending_consumptions` table is created on service startup — no manual SQL needed. Just start the service:
+```bash
+python -m src.main
+```
+
+---
+
+## 9. Local end-to-end test (manual)
 
 A manual test script is available at `scripts/test_consumption_flow.py`. It simulates two badge holders ordering items for the same company and verifies the full MySQL → FossBilling invoice flow.
 
@@ -190,7 +218,7 @@ Change `COMPANY_ID` at the top of the script to a company_id that exists in your
 
 ---
 
-## 9. Pending: event-end handler
+## 10. Pending: event-end handler
 
 The trigger that fires at the end of an event to create invoices is **not yet implemented**. It is waiting on the frontend/CRM team to define the message type and format.
 
@@ -205,7 +233,7 @@ When the format is known, the handler will:
 
 ---
 
-## 10. Security notes
+## 11. Security notes
 
 | Area | Status |
 |------|--------|
