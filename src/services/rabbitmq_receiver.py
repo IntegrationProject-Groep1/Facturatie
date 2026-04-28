@@ -14,6 +14,7 @@ from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq
 )
 from src.services import fossbilling_api as fossbilling_client, crm_publisher
+from src.services import consumption_store
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
 VALID_TYPES: set[str] = {
@@ -332,6 +333,40 @@ def process_message(
         crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
+
+    elif msg_type == "consumption_order":
+        is_company_linked = root.findtext("body/customer/is_company_linked") == "true"
+        company_id = root.findtext("body/customer/company_id")
+        badge_id = root.findtext("body/customer/id") or ""
+        master_uuid = badge_id
+
+        if not is_company_linked or not company_id:
+            send_to_dlq(channel, body, ["ERROR: consumption_order requires is_company_linked=true and company_id"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        items = []
+        for item_el in root.findall("body/items/item"):
+            description = item_el.findtext("description") or ""
+            unit_price_el = item_el.find("unit_price")
+            items.append({
+                "description": description,
+                "price": unit_price_el.text if unit_price_el is not None else "0",
+                "quantity": int(item_el.findtext("quantity") or 1),
+                "vat_rate": item_el.findtext("vat_rate") or "",
+            })
+
+        try:
+            consumption_store.save_items(company_id, badge_id, master_uuid, items)
+            logging.info(
+                "[RECEIVER] consumption_order saved | company_id=%s | badge_id=%s | items=%d",
+                company_id, badge_id, len(items),
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+        except Exception as e:
+            logging.error("[RECEIVER] ERROR: consumption_order_save_failed: %s", e)
+            send_to_dlq(channel, body, [f"ERROR: consumption_order_save_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     else:
         print(f"[RECEIVER] No handler for type '{msg_type}' — acknowledging")

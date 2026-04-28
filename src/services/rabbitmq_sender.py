@@ -48,6 +48,14 @@ def build_consumption_order_xml(
         ET.SubElement(customer, "company_id").text = company_id
         ET.SubElement(customer, "company_name").text = company_name
 
+    ET.SubElement(customer, "email").text = ""
+    addr = ET.SubElement(customer, "address")
+    for field in ["street", "number", "postal_code", "city"]:
+        ET.SubElement(addr, field).text = ""
+    ET.SubElement(addr, "country").text = "be"
+
+    ET.SubElement(body, "payment_method").text = "company_link"
+
     # Build body — items
     items_el = ET.SubElement(body, "items")
     for item in items:
