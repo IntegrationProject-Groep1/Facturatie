@@ -119,6 +119,7 @@ def build_invoice_request_xml(
     invoice_id: str,
     client_email: str,
     correlation_id: str,
+    master_uuid: str,
     company_name: str = "",
     source: str = "facturatie",
 ) -> str:
@@ -139,6 +140,7 @@ def build_invoice_request_xml(
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
     ET.SubElement(header, "correlation_id").text = correlation_id
+    ET.SubElement(header, "master_uuid").text = master_uuid
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "invoice_id").text = invoice_id

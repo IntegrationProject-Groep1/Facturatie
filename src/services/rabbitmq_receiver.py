@@ -14,6 +14,7 @@ from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq
 )
 from src.services import fossbilling_api as fossbilling_client, crm_publisher
+from src.services.identity_client import request_master_uuid
 from src.services import consumption_store
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
@@ -140,6 +141,17 @@ def process_message(
     # Process new customer registration
     if msg_type == "new_registration":
         customer_data = extract_customer_data(root)
+
+        # Request master UUID from identity-service
+        try:
+            master_uuid = request_master_uuid(customer_data["email"])
+            print(f"[RECEIVER] master_uuid received | email={customer_data['email']} | master_uuid={master_uuid}")
+        except Exception as e:
+            print(f"[RECEIVER] ERROR: master_uuid request failed — {e}")
+            send_to_dlq(channel, body, [f"ERROR: identity_service_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
         try:
             # Create registration invoice in FossBilling
             invoice_id = create_registration_invoice(customer_data)
@@ -155,6 +167,7 @@ def process_message(
             client_email=customer_data["email"],
             correlation_id=msg_id,
             company_name=customer_data.get("company_name", ""),
+            master_uuid=master_uuid,
         )
 
         send_message(
@@ -381,7 +394,7 @@ def start_receiver(queue: str | None = None) -> None:
     connection = get_connection()
     channel = connection.channel()
 
-    channel.queue_declare(queue=queue, durable=True)
+    channel.queue_declare(queue=queue, passive=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=process_message)
 

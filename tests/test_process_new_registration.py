@@ -12,6 +12,11 @@ def clear_seen_ids():
     yield
     receiver.seen_message_ids.clear()
 
+@pytest.fixture(autouse=True)
+def mock_identity():
+    """Zorgt ervoor dat request_master_uuid altijd direct een test-id teruggeeft."""
+    with patch("src.services.rabbitmq_receiver.request_master_uuid", return_value="88888-MOCK-UUID-12345"):
+        yield
 
 def make_channel() -> MagicMock:
     channel = MagicMock()
@@ -33,6 +38,7 @@ VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>a1b2c3d4-0000-4000-8000-000000000099</message_id>
+    <master_uuid>01890a5d-ac96-7ab2-80e2-4536629c90ib</master_uuid>
     <version>2.0</version>
     <type>new_registration</type>
     <timestamp>2026-03-31T10:00:00Z</timestamp>
@@ -40,11 +46,13 @@ VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
   </header>
   <body>
     <customer>
-      <id>12345</id>
+      <customer_id>12345</customer_id>
       <email>info@bedrijf.be</email>
       <first_name>Test</first_name>
       <last_name>User</last_name>
       <is_company_linked>false</is_company_linked>
+      <company_id>4</company_id>
+      <company_name></company_name>
       <address>
         <street>Kiekenmarkt</street>
         <number>42</number>
