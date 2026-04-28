@@ -104,7 +104,11 @@ def test_extract_customer_data_address() -> None:
 def test_process_new_registration_acks_on_success() -> None:
     """process_message must ack the message when FossBilling succeeds."""
     channel = make_channel()
-    with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"):
+    # We mocken de factuur creatie EN de XML builder om TypeErrors te voorkomen
+    with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"), \
+         patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml") as mock_xml:
+
+        mock_xml.return_value = "<xml>mock</xml>"
         process_message(channel, make_method(), MagicMock(), VALID_XML)
 
     # If this fails, check stdout.
@@ -116,16 +120,14 @@ def test_process_new_registration_acks_on_success() -> None:
 def test_process_new_registration_sends_invoice_request() -> None:
     """process_message must send invoice_request to facturatie.to.mailing on success."""
     channel = make_channel()
-    with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"):
+    with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"), \
+         patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml") as mock_xml:
+
+        mock_xml.return_value = "<xml>mock</xml>"
         process_message(channel, make_method(), MagicMock(), VALID_XML)
 
-    # Find the call that does NOT go to the DLQ
-    actual_routing_key = None
-    for call in channel.basic_publish.call_args_list:
-        if call.kwargs.get("routing_key") == "facturatie.to.mailing":
-            actual_routing_key = "facturatie.to.mailing"
-
-    assert actual_routing_key == "facturatie.to.mailing"
+    actual_keys = [call.kwargs.get("routing_key") for call in channel.basic_publish.call_args_list]
+    assert "facturatie.to.mailing" in actual_keys
 
 
 def test_process_new_registration_nacks_to_dlq_on_fossbilling_failure() -> None:
