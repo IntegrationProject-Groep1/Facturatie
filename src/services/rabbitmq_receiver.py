@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import fromstring as defused_fromstring
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
-from .rabbitmq_sender import build_invoice_request_xml, build_payment_confirmed_xml, send_message
+from .rabbitmq_sender import build_invoice_created_notification_xml, build_payment_confirmed_xml, send_message
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq
@@ -149,21 +149,19 @@ def process_message(
             return
 
         # Build and send XML for the Mailing Service
-        invoice_request_xml = build_invoice_request_xml(
+        notification_xml = build_invoice_created_notification_xml(
             invoice_id=invoice_id,
-            client_email=customer_data["email"],
-            correlation_id=msg_id,
-            company_name=customer_data.get("company_name", ""),
+            recipient_email=customer_data["email"],
         )
 
         send_message(
-            invoice_request_xml,
+            notification_xml,
             routing_key="facturatie.to.mailing",
             channel=channel
         )
 
         print(
-            f"[RECEIVER] invoice_request sent | invoice_id={invoice_id}"
+            f"[RECEIVER] invoice_created_notification sent | invoice_id={invoice_id}"
             f" | correlation_id={msg_id}"
         )
 
@@ -189,14 +187,12 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        invoice_xml = build_invoice_request_xml(
+        notification_xml = build_invoice_created_notification_xml(
             invoice_id=invoice_id,
-            client_email=data["customer"]["email"],
-            correlation_id=msg_id,
-            company_name=data["customer"].get("company_name", ""),
+            recipient_email=data["customer"]["email"],
         )
-        send_message(invoice_xml, routing_key="facturatie.to.mailing", channel=channel)
-        print(f"[RECEIVER] invoice sent | invoice_id={invoice_id} | correlation_id={msg_id}")
+        send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
+        print(f"[RECEIVER] invoice_created_notification sent | invoice_id={invoice_id} | correlation_id={msg_id}")
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
     elif msg_type == "payment_registered":

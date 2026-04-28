@@ -107,36 +107,36 @@ def send_message(
         connection.close()
 
 
-def build_invoice_request_xml(
+def build_invoice_created_notification_xml(
     invoice_id: str,
-    client_email: str,
-    correlation_id: str,
-    company_name: str = "",
-    source: str = "facturatie",
+    recipient_email: str,
+    subject: str = "Uw nieuwe factuur",
+    message_text: str = "Beste klant, uw factuur staat klaar.",
+    source: str = "facturatie_system",
 ) -> str:
     """
-    Builds an invoice XML message to be sent to the Mailing team.
-    correlation_id must reference the message_id of the original new_registration message.
-    company_name is optional — only include when the client is a company.
+    Builds an invoice_created_notification XML message to be sent to the Mailing team.
     """
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    billing_base = os.getenv("BILLING_API_URL", "").rsplit("/api", 1)[0]
+    pdf_url = f"{billing_base}/invoice/{invoice_id}"
 
     root = ET.Element("message")
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "invoice"
+    ET.SubElement(header, "version").text = "1.0"
+    ET.SubElement(header, "type").text = "invoice_created_notification"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
-    ET.SubElement(header, "correlation_id").text = correlation_id
 
     body = ET.SubElement(root, "body")
+    ET.SubElement(body, "recipient_email").text = recipient_email
     ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "client_email").text = client_email
-    if company_name:
-        ET.SubElement(body, "company_name").text = company_name
+    ET.SubElement(body, "subject").text = subject
+    ET.SubElement(body, "message_text").text = message_text
+    ET.SubElement(body, "pdf_url").text = pdf_url
 
     ET.indent(root, space="    ")
     return f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
