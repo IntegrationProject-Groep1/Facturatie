@@ -4,6 +4,7 @@ import time
 import threading
 from src.services.rabbitmq_receiver import start_receiver
 from src.services.dlq_consumer import start_dlq_consumer
+from src.services.consumption_store import init_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -13,6 +14,7 @@ logging.basicConfig(
 
 def main():
     print("Facturatie Integration Service started.", flush=True)
+    init_db()
 
     receiver_thread = threading.Thread(target=start_receiver, daemon=True)
     receiver_thread.start()
