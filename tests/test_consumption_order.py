@@ -446,7 +446,7 @@ class TestProcessMessageEventEnded:
              patch("src.services.rabbitmq_receiver.consumption_store.get_pending_company_ids",
                    return_value=["FOSS-CUST-102"]), \
              patch("src.services.rabbitmq_receiver.consumption_store.get_items_for_company",
-                   return_value=([], [])), \
+                   return_value=([{"title": "Test Item", "price": "10.00", "quantity": 1}], [123])), \
              patch("src.services.rabbitmq_receiver.consumption_store.get_company_meta",
                    return_value={"email": "", "company_name": ""}), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
