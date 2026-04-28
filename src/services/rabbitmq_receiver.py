@@ -333,6 +333,36 @@ def process_message(
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
+    elif msg_type == "consumption_order":
+        is_company_linked = root.findtext("body/customer/is_company_linked") == "true"
+        company_id = root.findtext("body/customer/company_id")
+        customer_id = root.findtext("body/customer/id") or ""
+
+        if not is_company_linked or not company_id:
+            send_to_dlq(channel, body, ["ERROR: consumption_order requires is_company_linked=true and company_id"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        items = []
+        for item_el in root.findall("body/items/item"):
+            description = item_el.findtext("description") or ""
+            unit_price_el = item_el.find("unit_price")
+            items.append({
+                "title": f"{description} (badge: {customer_id})",
+                "price": unit_price_el.text if unit_price_el is not None else "0",
+                "quantity": int(item_el.findtext("quantity") or 1),
+                "vat_rate": item_el.findtext("vat_rate") or "",
+            })
+
+        try:
+            invoice_id = fossbilling_client.process_consumption_order(company_id, items)
+            print(f"[RECEIVER] consumption_order processed | invoice_id={invoice_id} | company_id={company_id}")
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+        except Exception as e:
+            print(f"[RECEIVER] ERROR: consumption_order_failed: {e}")
+            send_to_dlq(channel, body, [f"ERROR: consumption_order_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
     else:
         print(f"[RECEIVER] No handler for type '{msg_type}' — acknowledging")
         channel.basic_ack(delivery_tag=method.delivery_tag)
