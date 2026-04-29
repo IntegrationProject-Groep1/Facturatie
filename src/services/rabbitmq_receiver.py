@@ -358,7 +358,6 @@ def process_message(
             return
 
         invoice_id = root.findtext("body/invoice/id")
-        customer_id = root.findtext("body/customer/id")
         correlation_id = root.findtext("header/correlation_id")
         master_uuid = root.findtext("header/master_uuid") or "unknown"
 
@@ -391,7 +390,7 @@ def process_message(
                 "[RECEIVER][%s] Invoice '%s' not found in FossBilling", msg_type, invoice_id
             )
             publish_cancellation_failed(
-                invoice_id, 
+                invoice_id,
                 master_uuid=master_uuid,
                 correlation_id=correlation_id,
                 reason="invoice_not_found",
