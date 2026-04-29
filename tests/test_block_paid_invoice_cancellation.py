@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from src.services.rabbitmq_receiver import process_message
 from src.services.fossbilling_api import get_invoice_status
-from src.services.crm_publisher import build_cancellation_failed_xml
+from src.services.rabbitmq_sender import build_invoice_cancelled_xml
 
 
 # --- Helpers (reuse pattern from test_invoice_cancellation.py) ---
@@ -75,11 +75,11 @@ def test_get_invoice_status_raises_on_connection_error():
             assert "Connection refused" in str(e)
 
 
-# --- Unit tests: build_cancellation_failed_xml ---
+# --- Unit tests: build_invoice_cancelled_xml ---
 
 def test_cancellation_failed_xml_contains_reason():
     """The failed XML must include the reason in the body."""
-    xml_str = build_cancellation_failed_xml(
+    xml_str = build_invoice_cancelled_xml(
         invoice_id="INV-001",
         customer_id="12345",
         correlation_id="corr-001",
@@ -91,7 +91,7 @@ def test_cancellation_failed_xml_contains_reason():
 
 def test_cancellation_failed_xml_has_correct_type():
     """The failed XML must use type invoice_cancelled."""
-    xml_str = build_cancellation_failed_xml(
+    xml_str = build_invoice_cancelled_xml(
         invoice_id="INV-001",
         customer_id="12345",
         correlation_id="corr-001",
@@ -103,7 +103,7 @@ def test_cancellation_failed_xml_has_correct_type():
 
 def test_cancellation_failed_xml_has_failed_status():
     """The failed XML must include status=failed in the body."""
-    xml_str = build_cancellation_failed_xml(
+    xml_str = build_invoice_cancelled_xml(
         invoice_id="INV-001",
         customer_id="12345",
         correlation_id="corr-001",
@@ -115,7 +115,7 @@ def test_cancellation_failed_xml_has_failed_status():
 
 def test_cancellation_failed_xml_preserves_correlation_id():
     """The failed XML must carry the original correlation_id."""
-    xml_str = build_cancellation_failed_xml(
+    xml_str = build_invoice_cancelled_xml(
         invoice_id="INV-001",
         customer_id="12345",
         correlation_id="corr-abc",
