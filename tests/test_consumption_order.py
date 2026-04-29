@@ -226,22 +226,25 @@ class TestProcessConsumptionOrder:
     ITEMS = [{"title": "Coca-Cola (badge: BADGE-007)", "price": "2.50", "quantity": 1, "vat_rate": "21"}]
 
     def test_creates_invoice_with_all_items(self):
-        with patch("src.services.fossbilling_api.get_client_by_company_id", return_value=42), \
-             patch("src.services.fossbilling_api._create_invoice", return_value="INV-2026-001") as mock_create:
+        with patch("src.services.fossbilling_api._get_or_create_billing_client", return_value=42), \
+            patch("src.services.fossbilling_api._create_invoice", return_value="INV-2026-001") as mock_create:
             result = process_consumption_order("FOSS-CUST-102", self.ITEMS)
+
         assert result == "INV-2026-001"
         mock_create.assert_called_once_with(42, self.ITEMS)
 
     def test_raises_when_company_not_found(self):
-        with patch("src.services.fossbilling_api.get_client_by_company_id", return_value=None):
-            with pytest.raises(Exception, match="company_id"):
+        with patch("src.services.fossbilling_api._get_or_create_billing_client",
+                side_effect=Exception("company not found")), \
+            patch("src.services.fossbilling_api.time.sleep"):
+            with pytest.raises(Exception, match="after 3 attempts"):
                 process_consumption_order("FOSS-CUST-UNKNOWN", self.ITEMS)
 
     def test_retries_on_transient_api_failure(self):
-        with patch("src.services.fossbilling_api.get_client_by_company_id",
-                   side_effect=[Exception("timeout"), 42]), \
-             patch("src.services.fossbilling_api._create_invoice", return_value="INV-2026-001"), \
-             patch("src.services.fossbilling_api.time.sleep"):
+        with patch("src.services.fossbilling_api._get_or_create_billing_client",
+                side_effect=[Exception("timeout"), 42]), \
+            patch("src.services.fossbilling_api._create_invoice", return_value="INV-2026-001"), \
+            patch("src.services.fossbilling_api.time.sleep"):
             result = process_consumption_order("FOSS-CUST-102", self.ITEMS)
         assert result == "INV-2026-001"
 
