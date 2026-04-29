@@ -27,7 +27,7 @@ def build_cancellation_xml(
     ET.SubElement(header, "source").text = source
     if correlation_id:
         ET.SubElement(header, "correlation_id").text = correlation_id
-        
+
     if master_uuid:
         ET.SubElement(header, "master_uuid").text = master_uuid
 
@@ -78,7 +78,7 @@ def _build_xml_bytes(**kwargs) -> bytes:
 def test_fossbilling_failure_sends_to_dlq():
     channel = MagicMock()
     method = _make_method()
-    body = _build_xml_bytes(msg_id="aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+    body = _build_xml_bytes(msg_id="bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", master_uuid="test-uuid-123")
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
@@ -96,29 +96,25 @@ def test_fossbilling_failure_sends_to_dlq():
 def test_successful_flow_sends_to_crm():
     channel = MagicMock()
     method = _make_method()
-    # The XML built by _build_xml_bytes includes master_uuid="test-uuid-123"
+    # De XML gebouwd door _build_xml_bytes bevat master_uuid="test-uuid-123"
     body = _build_xml_bytes(msg_id="bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb")
 
-    # FIX: Patch directly in rabbitmq_receiver, and use the correct function name
+    # FIX: Eén 'with' blok met alle patches. Let op de backslashes (\) aan het eind van de regels!
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status", return_value="unpaid"), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice", return_value=True), \
          patch("src.services.rabbitmq_receiver.publish_invoice_cancelled") as mock_publish:
-        
+
+        # Roep de functie aan (slechts 1 keer!)
         process_message(channel, method, MagicMock(), body)
 
-    channel.basic_ack.assert_called_once_with(delivery_tag=1)
-    
-    # FIX: Assert against the correct arguments (using master_uuid instead of customer_id)
-    mock_publish.assert_called_once_with(
-        "INV-2026-001", 
-        "test-uuid-123", 
-        "a23bc45d-89ef-1234-b567-1f03c3d4e580", 
-        channel=channel
-    )
-         patch("src.services.rabbitmq_receiver.publish_invoice_cancelled") as mock_crm:
-        process_message(channel, method, MagicMock(), body)
+        # De asserts moeten binnen OF buiten het blok, maar de mock_publish assert moet kloppen met je logic
+        channel.basic_ack.assert_called_once_with(delivery_tag=1)
 
-    channel.basic_ack.assert_called_once_with(delivery_tag=1)
-    mock_crm.assert_called_once_with("INV-2026-001", "unknown", "a23bc45d-89ef-1234-b567-1f03c3d4e580", channel=channel)
+        mock_publish.assert_called_once_with(
+            "INV-2026-001",
+            "test-uuid-123",
+            "a23bc45d-89ef-1234-b567-1f03c3d4e580",
+            channel=channel
+        )
