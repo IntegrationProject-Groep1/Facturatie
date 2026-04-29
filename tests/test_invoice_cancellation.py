@@ -78,7 +78,7 @@ def _build_xml_bytes(**kwargs) -> bytes:
 def test_fossbilling_failure_sends_to_dlq():
     channel = MagicMock()
     method = _make_method()
-    body = _build_xml_bytes(msg_id="aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+    body = _build_xml_bytes(msg_id="bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", master_uuid="test-uuid-123")
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
@@ -96,16 +96,20 @@ def test_fossbilling_failure_sends_to_dlq():
 def test_successful_flow_sends_to_crm():
     channel = MagicMock()
     method = _make_method()
+    # De XML gebouwd door _build_xml_bytes bevat master_uuid="test-uuid-123"
     body = _build_xml_bytes(msg_id="bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb")
 
+    # FIX: Eén 'with' blok met alle patches. Let op de backslashes (\) aan het eind van de regels!
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status", return_value="unpaid"), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice", return_value=True), \
          patch("src.services.rabbitmq_receiver.publish_invoice_cancelled") as mock_publish:
 
+        # Roep de functie aan (slechts 1 keer!)
         process_message(channel, method, MagicMock(), body)
 
+        # De asserts moeten binnen OF buiten het blok, maar de mock_publish assert moet kloppen met je logic
         channel.basic_ack.assert_called_once_with(delivery_tag=1)
 
         mock_publish.assert_called_once_with(
