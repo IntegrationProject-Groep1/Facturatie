@@ -23,7 +23,7 @@ from src.services.consumption_store import (  # noqa: E402
 )
 from src.services.fossbilling_api import process_consumption_order  # noqa: E402
 
-COMPANY_ID = "FOSS-CUST-102"  # change to a real company_id in your FossBilling
+COMPANY_ID = "Bedrijf NV"  # change to a real company_id in your FossBilling
 
 
 def step(label):

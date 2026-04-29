@@ -68,13 +68,21 @@ def init_db() -> None:
                     cursor.execute(f"ALTER TABLE pending_consumptions ADD COLUMN {col_name} {col_def}")
                     logging.info(f"[DB] Migration: Added column {col_name} to pending_consumptions")
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS company_accounts (
+                    company_id            VARCHAR(100) PRIMARY KEY,
+                    fossbilling_client_id INT NOT NULL,
+                    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
         conn.commit()
     except Exception as e:
         logging.error(f"[DB] Error initializing database: {e}")
         raise
     finally:
         conn.close()
-    logging.info("[DB] pending_consumptions table ready")
+    logging.info("[DB] Tables ready (pending_consumptions, company_accounts)")
 
 
 def save_items(
@@ -133,6 +141,37 @@ def get_company_meta(company_id: str) -> dict:
     if row is None:
         return {"email": "", "company_name": ""}
     return {"email": row["email"], "company_name": row["company_name"]}
+
+
+def get_company_client_id(company_id: str) -> int | None:
+    """Returns the FossBilling billing client_id for a company, or None if not yet registered."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT fossbilling_client_id FROM company_accounts WHERE company_id = %s",
+                (company_id,),
+            )
+            row = cursor.fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row else None
+
+
+def save_company_client_id(company_id: str, client_id: int) -> None:
+    """Saves or updates the FossBilling billing client_id for a company."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO company_accounts (company_id, fossbilling_client_id) VALUES (%s, %s) "
+                "ON DUPLICATE KEY UPDATE fossbilling_client_id = %s",
+                (company_id, client_id, client_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    logging.info("[DB] Company billing account saved: company_id=%s → client_id=%s", company_id, client_id)
 
 
 def get_items_for_company(company_id: str) -> tuple[list[dict], list[int]]:

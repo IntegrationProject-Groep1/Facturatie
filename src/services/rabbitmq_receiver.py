@@ -224,7 +224,9 @@ def process_message(
                     if not items:
                         continue
                     meta = consumption_store.get_company_meta(company_id)
-                    invoice_id = fossbilling_client.process_consumption_order(company_id, items)
+                    invoice_id = fossbilling_client.process_consumption_order(
+                        company_id, items, company_name=meta["company_name"]
+                    )
 
                     consumption_store.clear_by_ids(row_ids)
 
