@@ -7,7 +7,7 @@ from src.services.rabbitmq_receiver import start_receiver
 from src.services.dlq_consumer import start_dlq_consumer
 from src.services.consumption_store import init_db
 from src.services.rabbitmq_utils import get_connection
-from src.services.crm_publisher import CRM_QUEUE
+from src.services.rabbitmq_sender import CRM_QUEUE
 
 logging.basicConfig(
     level=logging.INFO,
