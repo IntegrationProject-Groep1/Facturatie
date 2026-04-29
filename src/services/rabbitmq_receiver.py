@@ -360,12 +360,13 @@ def process_message(
         invoice_id = root.findtext("body/invoice/id")
         customer_id = root.findtext("body/customer/id")
         correlation_id = root.findtext("header/correlation_id")
+        master_uuid = root.findtext("header/master_uuid") or "unknown"
 
         if not invoice_id:
             send_to_dlq(channel, body, ["ERROR: missing invoice_id in invoice_cancelled message"])
             publish_cancellation_failed(
                 invoice_id="unknown",
-                master_uuid=root.findtext("header/master_uuid") or "unknown",
+                master_uuid=master_uuid,
                 correlation_id=correlation_id,
                 reason="missing_invoice_id",
                 channel=channel,
@@ -391,7 +392,7 @@ def process_message(
             )
             publish_cancellation_failed(
                 invoice_id, 
-                master_uuid=root.findtext("header/master_uuid") or "unknown",
+                master_uuid=master_uuid,
                 correlation_id=correlation_id,
                 reason="invoice_not_found",
                 channel=channel,
@@ -406,7 +407,7 @@ def process_message(
                 msg_type, invoice_id, status
             )
             publish_cancellation_failed(
-                invoice_id, master_uuid=root.findtext("header/master_uuid") or "unknown", correlation_id=correlation_id,
+                invoice_id, master_uuid=master_uuid, correlation_id=correlation_id,
                 reason=reason,
                 channel=channel,
             )
@@ -420,7 +421,7 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        publish_invoice_cancelled(invoice_id, root.findtext("header/master_uuid") or "unknown", correlation_id, channel=channel)
+        publish_invoice_cancelled(invoice_id, master_uuid, correlation_id, channel=channel)
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
