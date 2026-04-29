@@ -2,7 +2,7 @@
 
 **Project:** Facturatie Microservice  
 **Branch:** `feature/add-invoices-company`  
-**Date:** 2026-04-28  
+**Date:** 2026-04-29  
 **Author:** Team Facturatie
 
 ---
@@ -16,7 +16,7 @@ The invoice request flow handles bar/kassa purchases made by employees of a comp
 ## 2. Architecture and message flow
 
 ```
-CRM / Kassa terminal
+CRM / POS terminal
    |
    | invoice_request (RabbitMQ: crm.to.facturatie)
    v
@@ -66,13 +66,13 @@ Facturatie service
       <address>...</address>
     </customer>
     <invoice>
-      <description>Inschrijving Event</description>
+      <description>Event Registration</description>
       <amount currency="eur">150.00</amount>
       <due_date>2026-05-01</due_date>
     </invoice>
     <items>
       <item>
-        <description>Inschrijving VIP</description>
+        <description>VIP Registration</description>
         <quantity>1</quantity>
         <unit_price currency="eur">150.00</unit_price>
         <vat_rate>21</vat_rate>
@@ -116,9 +116,13 @@ FossBilling has no API endpoint to add items to an existing invoice incrementall
 
 ---
 
-## 5. Database: pending_consumptions table
+## 5. Database tables
 
-Created automatically at service startup via `init_db()` in `src/services/consumption_store.py`.
+Both tables are created automatically at service startup via `init_db()` in `src/services/consumption_store.py`.
+
+### pending_consumptions
+
+Stores all consumption items received during an event, grouped per company.
 
 ```sql
 CREATE TABLE IF NOT EXISTS pending_consumptions (
@@ -145,30 +149,48 @@ CREATE TABLE IF NOT EXISTS pending_consumptions (
 - `master_uuid` — from `header/master_uuid`; embedded in invoice line descriptions so the company can trace who ordered what
 - `master_uuid` is NOT NULL and indexed, but NOT UNIQUE — one employee can have multiple rows
 
+### company_accounts
+
+Stores the mapping between a `company_id` and the dedicated FossBilling billing account for that company.
+
+```sql
+CREATE TABLE IF NOT EXISTS company_accounts (
+    company_id            VARCHAR(100) PRIMARY KEY,
+    fossbilling_client_id INT NOT NULL,
+    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+**Why this table exists:** When multiple employees of the same company are registered as FossBilling clients, a simple search by company name can return any of them. This table ensures the consolidated invoice always goes to one dedicated billing account per company, regardless of how many employee accounts exist.
+
+The billing account is created automatically the first time `event_ended` fires for a company. It has a generated email (`billing.<company_id>@facturatie.be`) and is never overwritten by employee registrations.
+
 ---
 
 ## 6. Files changed
 
 ### `src/services/consumption_store.py` *(new)*
 
-Handles all MySQL interaction for pending consumptions.
+Handles all MySQL interaction for pending consumptions and company billing accounts.
 
 | Function | Purpose |
 |----------|---------|
-| `init_db()` | Creates the `pending_consumptions` table if it does not exist |
+| `init_db()` | Creates `pending_consumptions` and `company_accounts` tables if they do not exist |
 | `save_items(company_id, badge_id, master_uuid, items, email, company_name)` | Inserts items from one `invoice_request` message |
 | `get_pending_company_ids()` | Returns all company_ids that have uninvoiced items |
 | `get_company_meta(company_id)` | Returns `email` and `company_name` for a company |
-| `get_items_for_company(company_id)` | Returns all pending items formatted for FossBilling (badge_id embedded in title) |
-| `clear_company(company_id)` | Deletes all rows for a company after the invoice is created |
+| `get_items_for_company(company_id)` | Returns `(items, row_ids)` — items formatted for FossBilling, row_ids for safe atomic deletion |
+| `clear_by_ids(row_ids)` | Deletes only the specific processed rows by their IDs (prevents race conditions) |
+| `get_company_client_id(company_id)` | Returns the stored FossBilling billing `client_id` for a company, or `None` |
+| `save_company_client_id(company_id, client_id)` | Saves or updates the billing account mapping for a company |
 
 ### `src/services/fossbilling_api.py` *(modified)*
 
 | Function | Purpose |
 |----------|---------|
-| `get_client_by_company_id(company_id)` | Exact-match lookup by company_id; returns client_id or None |
-| `get_unpaid_invoice_for_client(client_id)` | Returns the first unpaid invoice_id for a client, or None |
-| `process_consumption_order(company_id, items)` | Creates one consolidated invoice at event-end; retries up to 3x |
+| `_billing_email(company_id)` | Generates a consistent billing email for a company account (e.g. `billing.bedrijf_nv@facturatie.be`) |
+| `_get_or_create_billing_client(company_id, company_name)` | Looks up the company billing account from MySQL; creates it in FossBilling if it does not exist yet |
+| `process_consumption_order(company_id, items, company_name)` | Creates one consolidated invoice on the company billing account; retries up to 3x |
 
 ### `src/services/rabbitmq_receiver.py` *(modified)*
 
@@ -255,33 +277,88 @@ pip install -r requirements.txt
 docker compose up mysql -d
 ```
 
-**4. The database table is created automatically**
-The `pending_consumptions` table is created on service startup — no manual SQL needed. Just start the service:
+**4. Tables are created automatically**
+Both `pending_consumptions` and `company_accounts` are created on service startup — no manual SQL needed. Just start the service:
 ```bash
 python -m src.main
 ```
 
+**5. Test the flow**
+```bash
+python scripts/send_invoice_request.py
+python scripts/send_event_ended.py
+```
+
+Check FossBilling — you should see one invoice per company on the dedicated billing account (`billing.<company>@facturatie.be`).
+
 ---
 
-## 10. Local end-to-end test
+## 10. End-to-end test via RabbitMQ
 
-An integration test is available at `tests/test_consumption_e2e.py`. It simulates two badge holders ordering items for the same company and verifies the full MySQL → FossBilling invoice flow. FossBilling is mocked — only MySQL needs to be running.
+This test uses the real service, real MySQL, and real FossBilling. Two scripts simulate the full flow.
 
-**Requirements:**
-- Docker Desktop running
-- `docker compose up mysql -d`
-- Wait ~15 seconds
+### Requirements
 
-**Run (PowerShell):**
+| What | Command |
+|------|---------|
+| MySQL running | `docker compose up mysql -d` |
+| Service running | `python -m src.main` (Terminal 1) |
+| FossBilling reachable | check `.env` for `BILLING_API_URL` and `BILLING_API_TOKEN` |
+| RabbitMQ running | queue `crm.to.facturatie` must exist |
+
+### Steps
+
+**1. Clean up old test data (optional but recommended)**
+
+Delete any leftover rows in MySQL:
+```bash
+docker exec -it facturatie-mysql-1 mysql -u fossbilling -pfossbilling fossbilling
+```
+```sql
+DELETE FROM pending_consumptions;
+DELETE FROM company_accounts;
+EXIT;
+```
+
+Delete old test invoices in FossBilling via the admin interface.
+
+**2. Send consumption items for two companies**
+```bash
+python scripts/send_invoice_request.py
+```
+This sends three `invoice_request` messages:
+- **BADGE-001** (Jan Peeters / Bedrijf NV): Coca-Cola + Water
+- **BADGE-002** (Marie Janssen / Bedrijf NV): Fanta
+- **BADGE-003** (Piet Janssen / Tech Corp): Coffee
+- **BADGE-004** (Sara Jan / Tech Corp): Cola + Fanta
+
+Items are saved in MySQL `pending_consumptions`. No FossBilling invoice is created yet.
+
+**3. Trigger end-of-event invoicing**
+```bash
+python scripts/send_event_ended.py
+```
+
+The service will:
+1. Find all companies with pending items
+2. For each company: look up or create a dedicated billing account in FossBilling
+3. Create one consolidated invoice per company
+4. Clear the processed rows from MySQL
+5. Send an invoice notification to `facturatie.to.mailing`
+
+**4. Verify in FossBilling**
+
+Go to **Invoices** in the FossBilling admin. You should see:
+- **Bedrijf NV billing account** → 1 invoice with Coca-Cola + Water + Fanta (all BADGE-001 and BADGE-002 lines)
+- **Tech Corp billing account** → 1 invoice with Koffie + Cola + Fanta (all BADGE-003 and BADGE-004 lines)
+
+The billing accounts have emails like `billing.bedrijf_nv@facturatie.be` and are separate from the individual employee accounts.
+
+### Automated integration test (MySQL only, FossBilling mocked)
+
 ```powershell
 $env:MYSQL_HOST = "localhost"; pytest -m integration -v
 ```
-
-The test:
-1. Drops and recreates the `pending_consumptions` table
-2. Saves items for BADGE-001 (Coca-Cola, Water) and BADGE-002 (Fanta) under the same company
-3. Triggers the `event_ended` handler with FossBilling mocked
-4. Asserts that one ACK and one mailing notification are sent
 
 ---
 
