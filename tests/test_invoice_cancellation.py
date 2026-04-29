@@ -117,3 +117,8 @@ def test_successful_flow_sends_to_crm():
         "a23bc45d-89ef-1234-b567-1f03c3d4e580", 
         channel=channel
     )
+         patch("src.services.rabbitmq_receiver.publish_invoice_cancelled") as mock_crm:
+        process_message(channel, method, MagicMock(), body)
+
+    channel.basic_ack.assert_called_once_with(delivery_tag=1)
+    mock_crm.assert_called_once_with("INV-2026-001", "unknown", "a23bc45d-89ef-1234-b567-1f03c3d4e580", channel=channel)
