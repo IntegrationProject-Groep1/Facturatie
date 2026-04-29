@@ -16,7 +16,7 @@ The invoice request flow handles bar/kassa purchases made by employees of a comp
 ## 2. Architecture and message flow
 
 ```
-CRM / Kassa terminal
+CRM / POS terminal
    |
    | invoice_request (RabbitMQ: crm.to.facturatie)
    v
@@ -66,13 +66,13 @@ Facturatie service
       <address>...</address>
     </customer>
     <invoice>
-      <description>Inschrijving Event</description>
+      <description>Event Registration</description>
       <amount currency="eur">150.00</amount>
       <due_date>2026-05-01</due_date>
     </invoice>
     <items>
       <item>
-        <description>Inschrijving VIP</description>
+        <description>VIP Registration</description>
         <quantity>1</quantity>
         <unit_price currency="eur">150.00</unit_price>
         <vat_rate>21</vat_rate>
@@ -277,11 +277,19 @@ pip install -r requirements.txt
 docker compose up mysql -d
 ```
 
-**4. The database table is created automatically**
-The `pending_consumptions` table is created on service startup — no manual SQL needed. Just start the service:
+**4. Tables are created automatically**
+Both `pending_consumptions` and `company_accounts` are created on service startup — no manual SQL needed. Just start the service:
 ```bash
 python -m src.main
 ```
+
+**5. Test the flow**
+```bash
+python scripts/send_invoice_request.py
+python scripts/send_event_ended.py
+```
+
+Check FossBilling — you should see one invoice per company on the dedicated billing account (`billing.<company>@facturatie.be`).
 
 ---
 
@@ -321,7 +329,7 @@ python scripts/send_invoice_request.py
 This sends three `invoice_request` messages:
 - **BADGE-001** (Jan Peeters / Bedrijf NV): Coca-Cola + Water
 - **BADGE-002** (Marie Janssen / Bedrijf NV): Fanta
-- **BADGE-003** (Piet Janssen / Tech Corp): Koffie
+- **BADGE-003** (Piet Janssen / Tech Corp): Coffee
 - **BADGE-004** (Sara Jan / Tech Corp): Cola + Fanta
 
 Items are saved in MySQL `pending_consumptions`. No FossBilling invoice is created yet.
