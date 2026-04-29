@@ -365,7 +365,7 @@ def process_message(
             send_to_dlq(channel, body, ["ERROR: missing invoice_id in invoice_cancelled message"])
             publish_cancellation_failed(
                 invoice_id="unknown",
-                customer_id=customer_id,
+                master_uuid=root.findtext("header/master_uuid") or "unknown",
                 correlation_id=correlation_id,
                 reason="missing_invoice_id",
                 channel=channel,
@@ -390,7 +390,9 @@ def process_message(
                 "[RECEIVER][%s] Invoice '%s' not found in FossBilling", msg_type, invoice_id
             )
             publish_cancellation_failed(
-                invoice_id, customer_id, correlation_id,
+                invoice_id, 
+                master_uuid=root.findtext("header/master_uuid") or "unknown",
+                correlation_id=correlation_id,
                 reason="invoice_not_found",
                 channel=channel,
             )
@@ -404,7 +406,7 @@ def process_message(
                 msg_type, invoice_id, status
             )
             publish_cancellation_failed(
-                invoice_id, customer_id, correlation_id,
+                invoice_id, master_uuid=root.findtext("header/master_uuid") or "unknown", correlation_id=correlation_id,
                 reason=reason,
                 channel=channel,
             )
@@ -418,7 +420,7 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        publish_invoice_cancelled(invoice_id, customer_id, correlation_id, channel=channel)
+        publish_invoice_cancelled(invoice_id, root.findtext("header/master_uuid") or "unknown", correlation_id, channel=channel)
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
