@@ -294,7 +294,7 @@ def process_message(
             if invoice_el is None:
                 raise ValueError("Missing <invoice> element")
 
-            invoice_id = invoice_el.findtext("id")
+            invoice_id = invoice_el.findtext("invoice_number") or invoice_el.findtext("id")
             due_date = invoice_el.findtext("due_date") or ""
             if not invoice_id:
                 raise ValueError("Missing invoice id in <invoice><id>")
