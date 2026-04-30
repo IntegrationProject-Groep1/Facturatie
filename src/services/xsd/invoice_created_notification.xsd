@@ -1,0 +1,32 @@
+<!-- Stuurt factuur link door naar mailing. -->
+
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs=""
+           elementFormDefault="qualified">
+  <xs:element name="message">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="header" type="HeaderType"/>
+        <xs:element name="body" type="MailingNotificationBodyType"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:complexType name="HeaderType">
+    <xs:sequence>
+      <xs:element name="message_id" type="xs:string"/>
+      <xs:element name="version" type="xs:string"/>
+      <xs:element name="type" type="xs:string" fixed="invoice_created_notification"/>
+      <xs:element name="timestamp" type="xs:dateTime"/>
+      <xs:element name="source" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="MailingNotificationBodyType">
+    <xs:sequence>
+      <xs:element name="recipient_email" type="xs:string"/>
+      <xs:element name="invoice_id" type="xs:string"/>
+      <xs:element name="subject" type="xs:string"/>
+      <xs:element name="message_text" type="xs:string"/>
+      <xs:element name="pdf_url" type="xs:anyURI"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:schema>

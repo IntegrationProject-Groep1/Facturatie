@@ -140,7 +140,7 @@ def build_invoice_created_notification_xml(
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
-    ET.SubElement(header, "version").text = "1.0"
+    ET.SubElement(header, "version").text = "2.0"
     ET.SubElement(header, "type").text = "invoice_created_notification"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source

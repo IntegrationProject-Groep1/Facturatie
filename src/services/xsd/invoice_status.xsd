@@ -1,0 +1,91 @@
+<!-- Stuurt de gegenereerde factuurdata terug naar CRM, inclusief de PDF-link, factuurnummer en vervaldatum voor de database. -->
+
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="" elementFormDefault="qualified">
+  
+  <!-- send_invoice XSD -->
+  
+  <xs:element name="message">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="header" type="HeaderType"/>
+        <xs:element name="body" type="SendInvoiceBodyType"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+ 
+  <xs:complexType name="HeaderType">
+    <xs:sequence>
+      <xs:element name="message_id" type="UuidV4"/>
+      <xs:element name="version" type="xs:string"/>
+      <xs:element name="type" type="xs:string" fixed="send_invoice"/>
+      <xs:element name="timestamp" type="xs:dateTime"/>
+      <xs:element name="source" type="xs:string"/>
+      <xs:element name="correlation_id" type="UuidV4"/>
+    </xs:sequence>
+  </xs:complexType>
+ 
+  <xs:complexType name="SendInvoiceBodyType">
+    <xs:sequence>
+      <xs:element name="customer" type="CustomerType"/>
+      <xs:element name="invoice" type="InvoiceType"/>
+    </xs:sequence>
+  </xs:complexType>
+ 
+  <xs:complexType name="CustomerType">
+    <xs:sequence>
+      <xs:element name="id" type="xs:string"/>
+      <xs:element name="email" type="xs:string"/>
+      <xs:element name="is_company_linked" type="xs:boolean"/>
+      <xs:element name="company_id" type="xs:string" minOccurs="0"/>
+      <xs:element name="address" type="AddressType"/>
+    </xs:sequence>
+  </xs:complexType>
+ 
+  <xs:complexType name="AddressType">
+    <xs:sequence>
+      <xs:element name="street" type="xs:string"/>
+      <xs:element name="number" type="xs:string"/>
+      <xs:element name="postal_code" type="xs:string"/>
+      <xs:element name="city" type="xs:string"/>
+      <xs:element name="country" type="CountryCodeType"/>
+    </xs:sequence>
+  </xs:complexType>
+ 
+  <xs:complexType name="InvoiceType">
+    <xs:sequence>
+      <xs:element name="id" type="xs:string"/>
+      <xs:element name="status" type="xs:string" fixed="paid"/>
+      <xs:element name="amount_paid" type="AmountType"/>
+      <xs:element name="due_date" type="xs:date"/>
+      <xs:element name="pdf_url" type="xs:anyURI"/>
+    </xs:sequence>
+  </xs:complexType>
+ 
+  <xs:complexType name="AmountType">
+    <xs:simpleContent>
+      <xs:extension base="xs:decimal">
+        <xs:attribute name="currency" type="CurrencyCodeType" use="required"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+ 
+  <xs:simpleType name="UuidV4">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+ 
+  <xs:simpleType name="CountryCodeType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[a-z]{2}"/>
+    </xs:restriction>
+  </xs:simpleType>
+ 
+  <xs:simpleType name="CurrencyCodeType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[a-z]{3}"/>
+    </xs:restriction>
+  </xs:simpleType>
+ 
+</xs:schema>
