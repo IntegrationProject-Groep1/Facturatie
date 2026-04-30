@@ -13,7 +13,7 @@
   <xs:complexType name="HeaderType">
     <xs:sequence>
       <xs:element name="message_id" type="xs:string"/>
-      <xs:element name="version" type="xs:string"/>
+      <xs:element name="version" type="xs:string" fixed="2.0"/>
       <xs:element name="type" type="xs:string" fixed="payment_registered"/>
       <xs:element name="timestamp" type="xs:dateTime"/>
       <xs:element name="source" type="xs:string"/>
@@ -23,6 +23,15 @@
 
   <xs:complexType name="PaymentRegisteredBodyType">
     <xs:sequence>
+      <xs:element name="payment_context">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="registration"/>
+            <xs:enumeration value="consumption"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+      <xs:element name="user_id" type="xs:string" minOccurs="0"/>
       <xs:element name="invoice" type="InvoiceType"/>
       <xs:element name="transaction" type="TransactionType"/>
     </xs:sequence>
@@ -30,8 +39,8 @@
 
   <xs:complexType name="InvoiceType">
     <xs:sequence>
-      <xs:element name="invoice_number" type="xs:string"/>
-      <xs:element name="status" type="xs:string"/>
+      <xs:element name="id" type="xs:string" minOccurs="0"/>
+      <xs:element name="status" type="InvoiceStatusType"/>
       <xs:element name="amount_paid" type="AmountType"/>
       <xs:element name="due_date" type="xs:date"/>
     </xs:sequence>
@@ -40,16 +49,38 @@
   <xs:complexType name="TransactionType">
     <xs:sequence>
       <xs:element name="id" type="xs:string"/>
-      <xs:element name="payment_method" type="xs:string"/>
+      <xs:element name="payment_method" type="PaymentMethodType"/>
     </xs:sequence>
   </xs:complexType>
 
   <xs:complexType name="AmountType">
     <xs:simpleContent>
       <xs:extension base="xs:decimal">
-        <xs:attribute name="currency" type="xs:string" default="eur"/>
+        <xs:attribute name="currency" use="required">
+          <xs:simpleType>
+            <xs:restriction base="xs:string">
+              <xs:enumeration value="eur"/>
+            </xs:restriction>
+          </xs:simpleType>
+        </xs:attribute>
       </xs:extension>
     </xs:simpleContent>
   </xs:complexType>
+
+  <xs:simpleType name="InvoiceStatusType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="paid"/>
+      <xs:enumeration value="pending"/>
+      <xs:enumeration value="cancelled"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="PaymentMethodType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="company_link"/>
+      <xs:enumeration value="on_site"/>
+      <xs:enumeration value="online"/>
+    </xs:restriction>
+  </xs:simpleType>
 
 </xs:schema>
