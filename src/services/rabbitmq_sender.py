@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import os
 import logging
 from src.services.rabbitmq_utils import get_connection
+from src.utils.xml_validator import validate_xml
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -119,7 +120,7 @@ def send_message(
 def build_invoice_created_notification_xml(
     invoice_id: str,
     recipient_email: str,
-    master_uuid: str,
+    correlation_id: str,
     subject: str = "Uw nieuwe factuur",
     message_text: str = "Beste klant, uw factuur staat klaar.",
     source: str = "facturatie",
@@ -144,7 +145,7 @@ def build_invoice_created_notification_xml(
     ET.SubElement(header, "type").text = "invoice_created_notification"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
-    ET.SubElement(header, "master_uuid").text = master_uuid
+    ET.SubElement(header, "correlation_id").text = correlation_id
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "recipient_email").text = recipient_email
@@ -154,27 +155,47 @@ def build_invoice_created_notification_xml(
     ET.SubElement(body, "pdf_url").text = pdf_url
 
     ET.indent(root, space="    ")
-    return f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+    xml_str = f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+
+    # Validate against XSD before sending
+    is_valid, error_msg = validate_xml(xml_str, "invoice_created_notification")
+    if not is_valid:
+        raise ValueError(
+            f"[SENDER] invoice_created_notification XSD validation failed: {error_msg}"
+        )
+
+    return xml_str
 
 
 def build_payment_confirmed_xml(
     invoice_id: str,
+    customer_id: str,
     amount: str,
     currency: str,
     payment_method: str,
-    transaction_id: str,
     correlation_id: str,
-    due_date: str,
+    paid_at: str | None = None,
     source: str = "facturatie",
 ) -> str:
     """
-    Builds a payment_registered confirmation XML message to be published
-    on RabbitMQ after a successful payment has been processed in FossBilling.
-    correlation_id must reference the message_id of the original
-    payment_registered message received from the Kassa.
+    Builds a payment_registered confirmation XML to publish after a successful
+    payment has been processed in FossBilling.
+    Sent to queue: facturatie.to.crm
+    and payement_registered_outgoing.xsd.
     """
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if paid_at is None:
+        paid_at = timestamp
+
+    # Enforce eur — log a warning if something else was passed
+    currency_lower = currency.lower()
+    if currency_lower != "eur":
+        logging.warning(
+            "[SENDER] build_payment_confirmed_xml: unexpected currency '%s', forcing 'eur'",
+            currency,
+        )
+        currency_lower = "eur"
 
     root = ET.Element("message")
 
@@ -187,23 +208,28 @@ def build_payment_confirmed_xml(
     ET.SubElement(header, "correlation_id").text = correlation_id
 
     body = ET.SubElement(root, "body")
-    invoice_el = ET.SubElement(body, "invoice")
-    ET.SubElement(invoice_el, "id").text = invoice_id
-    ET.SubElement(invoice_el, "status").text = "paid"
-    amount_el = ET.SubElement(invoice_el, "amount_paid")
+    ET.SubElement(body, "invoice_id").text = invoice_id
+    ET.SubElement(body, "customer_id").text = customer_id
+    amount_el = ET.SubElement(body, "amount_paid")
     amount_el.text = amount
-    amount_el.set("currency", currency.lower())
-    ET.SubElement(invoice_el, "due_date").text = due_date
-
-    transaction_el = ET.SubElement(body, "transaction")
-    ET.SubElement(transaction_el, "id").text = transaction_id
-    ET.SubElement(transaction_el, "payment_method").text = payment_method
+    amount_el.set("currency", currency_lower)
+    ET.SubElement(body, "payment_method").text = payment_method
+    ET.SubElement(body, "paid_at").text = paid_at
 
     ET.indent(root, space="    ")
-    return (
+    xml_str = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         + ET.tostring(root, encoding="unicode")
     )
+
+    # Validate against XSD before sending
+    is_valid, error_msg = validate_xml(xml_str, "payment_registered_outgoing")
+    if not is_valid:
+        raise ValueError(
+            f"[SENDER] payment_registered (outgoing) XSD validation failed: {error_msg}"
+        )
+
+    return xml_str
 
 
 def send_error_to_monitor(error_message: str) -> None:
