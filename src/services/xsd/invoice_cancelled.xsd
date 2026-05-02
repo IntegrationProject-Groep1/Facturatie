@@ -1,31 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
-
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
   <xs:element name="message">
-    <xs:complexType>
-      <xs:sequence>
-        <xs:element name="header" type="HeaderType"/>
-        <xs:element name="body" type="InvoiceCancelledBodyType"/>
-      </xs:sequence>
-    </xs:complexType>
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id" type="xs:string"/>
+          <xs:element name="timestamp"  type="xs:dateTime"/>
+          <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="crm"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="invoice_cancelled"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <xs:element name="invoice_id"  type="xs:string"/>
+          <xs:element name="customer_id" type="xs:string"/>
+          <xs:element name="reason"      type="xs:string" minOccurs="0"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
   </xs:element>
-
-  <xs:complexType name="HeaderType">
-    <xs:sequence>
-      <xs:element name="message_id" type="xs:string"/>
-      <xs:element name="version" type="xs:string" fixed="2.0"/>
-      <xs:element name="type" type="xs:string" fixed="invoice_cancelled"/>
-      <xs:element name="timestamp" type="xs:dateTime"/>
-      <xs:element name="source" type="xs:string"/>
-      <xs:element name="correlation_id" type="xs:string" minOccurs="0"/>
-    </xs:sequence>
-  </xs:complexType>
-
-  <xs:complexType name="InvoiceCancelledBodyType">
-    <xs:sequence>
-      <xs:element name="invoice_number" type="xs:string"/>
-      <xs:element name="reason" type="xs:string" minOccurs="0"/>
-    </xs:sequence>
-  </xs:complexType>
-
 </xs:schema>

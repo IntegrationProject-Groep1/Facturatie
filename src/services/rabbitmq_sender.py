@@ -185,7 +185,6 @@ def build_payment_confirmed_xml(
     amount: str,
     currency: str,
     payment_method: str,
-    correlation_id: str,
     paid_at: str | None = None,
     source: str = "facturatie",
 ) -> str:
@@ -213,11 +212,10 @@ def build_payment_confirmed_xml(
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "payment_registered"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
-    ET.SubElement(header, "correlation_id").text = correlation_id
+    ET.SubElement(header, "type").text = "payment_registered"
+    ET.SubElement(header, "version").text = "2.0"
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "invoice_id").text = invoice_id

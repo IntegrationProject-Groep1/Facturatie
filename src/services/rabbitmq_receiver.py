@@ -168,6 +168,7 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
+        # Build and send XML for the Mailing Service
         notification_xml = build_invoice_created_notification_xml(
             invoice_id=invoice_id,
             recipient_email=customer_data["email"],
@@ -313,7 +314,6 @@ def process_message(
 
             print(f"[RECEIVER] Payment registered in FossBilling | invoice_id={invoice_id}")
 
-            # Stuur bevestiging naar CRM — outgoing formaat (Facturatie→CRM)
             paid_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             confirmation_xml = build_payment_confirmed_xml(
                 invoice_id=invoice_id,
@@ -321,7 +321,6 @@ def process_message(
                 amount=amount,
                 currency=currency,
                 payment_method=payment_method,
-                correlation_id=msg_id,
                 paid_at=paid_at,
             )
             send_message(
@@ -350,13 +349,12 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        # invoice_cancelled body heeft <invoice_number> en optioneel <reason>
-        invoice_id = root.findtext("body/invoice_number")
-        customer_id = root.findtext("header/message_id")  # geen customer_id in dit schema
-        correlation_id = root.findtext("header/correlation_id")
+        invoice_id = root.findtext("body/invoice_id")
+        customer_id = root.findtext("body/customer_id") or ""
+        correlation_id = root.findtext("header/message_id")
 
         if not invoice_id:
-            send_to_dlq(channel, body, ["ERROR: missing invoice_number in invoice_cancelled message"])
+            send_to_dlq(channel, body, ["ERROR: missing invoice_id in invoice_cancelled message"])
             crm_publisher.publish_cancellation_failed(
                 invoice_id="unknown",
                 customer_id=customer_id,
