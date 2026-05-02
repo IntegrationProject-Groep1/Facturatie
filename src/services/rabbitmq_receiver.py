@@ -9,12 +9,18 @@ from defusedxml.ElementTree import fromstring as defused_fromstring
 from datetime import datetime, timezone
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
-from .rabbitmq_sender import build_invoice_created_notification_xml, build_payment_confirmed_xml, send_message
+from .rabbitmq_sender import (
+    build_invoice_created_notification_xml,
+    build_payment_confirmed_xml,
+    publish_cancellation_failed,
+    publish_invoice_cancelled,
+    send_message,
+)
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq
 )
-from src.services import fossbilling_api as fossbilling_client, crm_publisher
+from src.services import fossbilling_api as fossbilling_client
 from src.services.identity_client import request_master_uuid
 from src.services import consumption_store
 
@@ -237,7 +243,9 @@ def process_message(
                     if not items:
                         continue
                     meta = consumption_store.get_company_meta(company_id)
-                    invoice_id = fossbilling_client.process_consumption_order(company_id, items)
+                    invoice_id = fossbilling_client.process_consumption_order(
+                        company_id, items, company_name=meta["company_name"]
+                    )
 
                     consumption_store.clear_by_ids(row_ids)
 
@@ -355,11 +363,12 @@ def process_message(
 
         if not invoice_id:
             send_to_dlq(channel, body, ["ERROR: missing invoice_id in invoice_cancelled message"])
-            crm_publisher.publish_cancellation_failed(
+            publish_cancellation_failed(
                 invoice_id="unknown",
-                customer_id=customer_id,
+                master_uuid=master_uuid,
                 correlation_id=correlation_id,
                 reason="missing_invoice_id",
+                channel=channel,
             )
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -380,8 +389,12 @@ def process_message(
             logging.warning(
                 "[RECEIVER][%s] Invoice '%s' not found in FossBilling", msg_type, invoice_id
             )
-            crm_publisher.publish_cancellation_failed(
-                invoice_id, customer_id, correlation_id, reason="invoice_not_found"
+            publish_cancellation_failed(
+                invoice_id,
+                master_uuid=master_uuid,
+                correlation_id=correlation_id,
+                reason="invoice_not_found",
+                channel=channel,
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
@@ -392,8 +405,10 @@ def process_message(
                 "[RECEIVER][%s] Cancellation blocked — invoice '%s' has status '%s'",
                 msg_type, invoice_id, status
             )
-            crm_publisher.publish_cancellation_failed(
-                invoice_id, customer_id, correlation_id, reason=reason
+            publish_cancellation_failed(
+                invoice_id, master_uuid=master_uuid, correlation_id=correlation_id,
+                reason=reason,
+                channel=channel,
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
@@ -405,7 +420,7 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
+        publish_invoice_cancelled(invoice_id, master_uuid, correlation_id, channel=channel)
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
