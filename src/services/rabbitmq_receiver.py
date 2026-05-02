@@ -58,6 +58,7 @@ def extract_customer_data(root: ET.Element) -> dict:
     """
     fee_el = root.find("body/registration_fee")
     return {
+        "customer_id": root.findtext("body/customer/customer_id") or "",
         "email": root.findtext("body/customer/email"),
         "first_name": root.findtext("body/customer/contact/first_name") or "",
         "last_name": root.findtext("body/customer/contact/last_name") or "",
@@ -167,21 +168,23 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        # Build and send XML for the Mailing Service
         notification_xml = build_invoice_created_notification_xml(
             invoice_id=invoice_id,
             recipient_email=customer_data["email"],
             correlation_id=msg_id,
+            first_name=customer_data.get("first_name", ""),
+            last_name=customer_data.get("last_name", ""),
+            customer_id=customer_data.get("customer_id", ""),
         )
 
         send_message(
             notification_xml,
-            routing_key="facturatie.to.mailing",
+            routing_key="crm.to.mailing",
             channel=channel
         )
 
         print(
-            f"[RECEIVER] invoice_created_notification sent | invoice_id={invoice_id}"
+            f"[RECEIVER] send_mailing sent | invoice_id={invoice_id}"
             f" | correlation_id={msg_id}"
         )
 
@@ -242,10 +245,12 @@ def process_message(
                             invoice_id=invoice_id,
                             recipient_email=meta["email"],
                             correlation_id=msg_id,
+                            first_name=meta.get("first_name", ""),
+                            last_name=meta.get("last_name", ""),
+                            customer_id=meta.get("customer_id", ""),
                             subject=f"Uw factuur {invoice_id} staat klaar",
-                            message_text="Bedankt voor uw gebruik van onze diensten. In de bijlage vindt u de details.",
                         )
-                        send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
+                        send_message(notification_xml, routing_key="crm.to.mailing", channel=channel)
                     except Exception as mail_err:
                         # We loggen de mail fout, maar gaan door (de factuur is immers al klaar)
                         logging.warning("[RECEIVER] Invoice created but mail failed for %s: %s", company_id, mail_err)

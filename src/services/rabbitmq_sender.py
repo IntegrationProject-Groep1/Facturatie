@@ -121,47 +121,59 @@ def build_invoice_created_notification_xml(
     invoice_id: str,
     recipient_email: str,
     correlation_id: str,
-    subject: str = "Uw nieuwe factuur",
-    message_text: str = "Beste klant, uw factuur staat klaar.",
+    first_name: str = "",
+    last_name: str = "",
+    customer_id: str = "",
+    subject: str = "Uw factuur staat klaar",
     source: str = "facturatie",
 ) -> str:
     """
-    Builds an invoice_created_notification XML message to be sent to the Mailing team.
+    Builds a send_mailing XML message to be sent to the Mailing team.
+    Queue: crm.to.mailing
     """
+    import json
+
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    billing_web_base = os.getenv("BILLING_WEB_URL")
-    if not billing_web_base:
-        logging.error("BILLING_WEB_URL is not set! PDF links will be broken.")
-        billing_web_base = "https://portal.yourdomain.com"
-
-    pdf_url = f"{billing_web_base.rstrip('/')}/invoice/{invoice_id}"
+    billing_web_base = os.getenv("BILLING_WEB_URL", "https://portal.yourdomain.com").rstrip("/")
+    pdf_url = f"{billing_web_base}/invoice/{invoice_id}"
 
     root = ET.Element("message")
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "invoice_created_notification"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "send_mailing"
+    ET.SubElement(header, "version").text = "2.0"
     ET.SubElement(header, "correlation_id").text = correlation_id
 
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "recipient_email").text = recipient_email
-    ET.SubElement(body, "invoice_id").text = invoice_id
+    ET.SubElement(body, "campaign_id").text = f"foss-invoice-{invoice_id}"
     ET.SubElement(body, "subject").text = subject
-    ET.SubElement(body, "message_text").text = message_text
-    ET.SubElement(body, "pdf_url").text = pdf_url
+    ET.SubElement(body, "template_id").text = "tmpl-invoice-ready"
+    ET.SubElement(body, "mail_type").text = "invoice_ready"
+
+    recipients = ET.SubElement(body, "recipients")
+    recipient = ET.SubElement(recipients, "recipient")
+    ET.SubElement(recipient, "email").text = recipient_email
+    ET.SubElement(recipient, "customer_id").text = customer_id or invoice_id
+    contact = ET.SubElement(recipient, "contact")
+    ET.SubElement(contact, "first_name").text = first_name
+    ET.SubElement(contact, "last_name").text = last_name
+
+    ET.SubElement(body, "template_data").text = json.dumps({
+        "invoice_id": invoice_id,
+        "pdf_url": pdf_url,
+    })
 
     ET.indent(root, space="    ")
     xml_str = f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
 
-    # Validate against XSD before sending
-    is_valid, error_msg = validate_xml(xml_str, "invoice_created_notification")
+    is_valid, error_msg = validate_xml(xml_str, "send_mailing")
     if not is_valid:
         raise ValueError(
-            f"[SENDER] invoice_created_notification XSD validation failed: {error_msg}"
+            f"[SENDER] send_mailing XSD validation failed: {error_msg}"
         )
 
     return xml_str
