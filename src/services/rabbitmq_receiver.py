@@ -436,7 +436,7 @@ def start_receiver(queue: str | None = None) -> None:
     connection = get_connection()
     channel = connection.channel()
 
-    channel.queue_declare(queue=queue, passive=True)
+    channel.queue_declare(queue=queue, passive=False, durable=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=process_message)
 
