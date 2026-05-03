@@ -1,81 +1,97 @@
-# Documentation: Invoice Request Flow (Consumption Orders)
+# Documentation: Consumption Order & Invoice Flow
 
 **Project:** Facturatie Microservice  
 **Branch:** `feature/add-invoices-company`  
-**Date:** 2026-04-29  
+**Date:** 2026-05-03  
 **Author:** Team Facturatie
 
 ---
 
 ## 1. Overview
 
-The invoice request flow handles bar/kassa purchases made by employees of a company during an event. Each purchase arrives as an `invoice_request` XML message via RabbitMQ. The service stores all items per company in a MySQL table. At the end of the event (triggered by an `event_ended` message), one consolidated FossBilling invoice is created per company containing all items from all employees, with each line showing which badge holder ordered it.
+This flow handles bar/kassa purchases made by employees of a company during an event. Each purchase arrives as a `consumption_order` XML message via RabbitMQ. The service stores all items per company in a MySQL table.
+
+Invoices can be triggered in two ways:
+
+- **Direct** — via an `invoice_request` message for one specific `consumption_order`, which creates an immediate invoice for those items.
+- **Deferred** — via an `event_ended` message at the end of the event, which collects all remaining uninvoiced items per company and creates one consolidated invoice per company.
 
 ---
 
 ## 2. Architecture and message flow
 
 ```
-CRM / POS terminal
+Kassa / CRM
    |
-   | invoice_request (RabbitMQ: crm.to.facturatie)
+   | consumption_order (RabbitMQ: facturatie.incoming)
    v
 Facturatie service
    |-- Invalid XML           -->  Dead Letter Queue (facturatie.dlq)
    |-- XSD validation fail   -->  Dead Letter Queue (facturatie.dlq)
    |-- Duplicate message_id  -->  Acknowledged, skipped
-   |-- Not company-linked    -->  Dead Letter Queue (facturatie.dlq)
+   |-- No items in message   -->  Dead Letter Queue (facturatie.dlq)
    |-- DB save failed        -->  Dead Letter Queue (facturatie.dlq)
    |
    | Items saved to MySQL (pending_consumptions)
+   | Indexed on consumption_order_id = message_id of the consumption_order
    |
-   v  [event_ended received from frontend]
+   +--[Path A: invoice_request received]-----------------------------+
+   |                                                                 |
+   | invoice_request (RabbitMQ: facturatie.incoming)                |
+   | correlation_id = message_id of the consumption_order           |
+   |   --> update_meta_by_correlation_id() (company_name, email)    |
+   |   --> get_items_by_correlation_id()                            |
+   |   --> process_consumption_order() --> FossBilling invoice      |
+   |   --> crm.to.mailing                                           |
+   |   --> clear_by_ids() (only the matched rows)                   |
+   |   |-- No items found    -->  Acknowledged, skipped             |
+   |   |-- FossBilling fail  -->  Dead Letter Queue                 |
+   |                                                                 |
+   +--[Path B: event_ended received]--------------------------------+
    |
-   | For each company_id with pending items:
-   |   process_consumption_order() --> FossBilling invoice created
-   |   --> facturatie.to.mailing
-   |   --> MySQL rows cleared
-   |-- FossBilling failure   -->  Dead Letter Queue (facturatie.dlq)
+   | event_ended (RabbitMQ: facturatie.incoming)
+   |   For each company_id with remaining pending items:
+   |   --> get_items_for_company()
+   |   --> process_consumption_order() --> FossBilling invoice
+   |   --> crm.to.mailing
+   |   --> clear_by_ids()
+   |   |-- FossBilling fail  -->  Dead Letter Queue
 ```
 
 ---
 
 ## 3. XML message formats
 
-### invoice_request (incoming)
+### consumption_order (incoming)
+
+Sent by Kassa (via CRM passthrough) when a purchase is made. One message per badge holder per transaction.
 
 ```xml
 <message>
   <header>
-    <message_id>inv-crm-12345</message_id>
-    <master_uuid>01890a5d-ac96-7ab2-80e2-4536629c90de</master_uuid>
-    <version>2.0</version>
-    <type>invoice_request</type>
-    <timestamp>2026-03-29T18:30:00Z</timestamp>
+    <message_id>78729c4c-a258-4c35-959c-a1d5805881a1</message_id>
+    <type>consumption_order</type>
     <source>crm</source>
+    <timestamp>2026-05-01T20:00:00Z</timestamp>
+    <version>2.0</version>
   </header>
   <body>
+    <is_anonymous>false</is_anonymous>
     <customer>
-      <customer_id>CRM-USR-999</customer_id>
-      <email>jan@example.com</email>
-      <first_name>Jan</first_name>
-      <last_name>Peeters</last_name>
-      <is_company_linked>true</is_company_linked>
-      <company_id>CRM-COMP-888</company_id>
-      <company_name>Peeters NV</company_name>
-      <address>...</address>
+      <id>bedrijf-nv-001</id>
+      <user_id>BADGE-001</user_id>
+      <type>company</type>
+      <email>jan.peeters@bedrijf.com</email>
     </customer>
-    <invoice>
-      <description>Event Registration</description>
-      <amount currency="eur">150.00</amount>
-      <due_date>2026-05-01</due_date>
-    </invoice>
     <items>
       <item>
-        <description>VIP Registration</description>
-        <quantity>1</quantity>
-        <unit_price currency="eur">150.00</unit_price>
+        <id>LINE-0001</id>
+        <sku>SKU-001</sku>
+        <description>Coca-Cola</description>
+        <quantity>2</quantity>
+        <unit_price currency="eur">2.50</unit_price>
         <vat_rate>21</vat_rate>
+        <total_amount currency="eur">5.00</total_amount>
       </item>
     </items>
   </body>
@@ -83,17 +99,58 @@ Facturatie service
 ```
 
 **Key fields:**
-- `header/master_uuid` — unique identifier for the employee, stored in MySQL
-- `body/customer/customer_id` — badge/QR-code ID of the employee
-- `body/customer/is_company_linked` — must be `true` for company invoicing
-- `body/customer/company_id` — used to group all items per company
+- `header/message_id` — wordt opgeslagen als `consumption_order_id` in MySQL, gebruikt als koppelingssleutel
+- `body/customer/id` — `company_id`, gebruikt om items per bedrijf te groeperen
+- `body/customer/user_id` — badge ID van de medewerker, verschijnt in de factuurlijn
+- `body/items/item` — de geconsumeerde items met prijs en BTW
 
-### event_ended (incoming)
+### invoice_request (incoming)
+
+Verstuurd door CRM wanneer een factuur gevraagd wordt voor één specifieke `consumption_order`. De `correlation_id` in de header verwijst naar de `message_id` van de bijhorende `consumption_order`.
 
 ```xml
 <message>
   <header>
-    <message_id>...</message_id>
+    <message_id>e5bc986d-3b15-4525-835c-e6d733e69401</message_id>
+    <type>invoice_request</type>
+    <source>crm</source>
+    <timestamp>2026-05-01T20:01:00Z</timestamp>
+    <version>2.0</version>
+    <correlation_id>78729c4c-a258-4c35-959c-a1d5805881a1</correlation_id>
+  </header>
+  <body>
+    <user_id>BADGE-001</user_id>
+    <invoice_data>
+      <first_name>Jan</first_name>
+      <last_name>Peeters</last_name>
+      <email>jan.peeters@bedrijf.com</email>
+      <address>
+        <street>Teststraat</street>
+        <number>1</number>
+        <postal_code>1000</postal_code>
+        <city>Brussel</city>
+        <country>BE</country>
+      </address>
+      <company_name>Bedrijf NV</company_name>
+      <vat_number>BE0123456789</vat_number>
+    </invoice_data>
+  </body>
+</message>
+```
+
+**Key fields:**
+- `header/correlation_id` — verwijst naar de `message_id` van de `consumption_order` waarvoor de factuur gevraagd wordt
+- `body/invoice_data/company_name` — wordt opgeslagen als facturatienaam en gebruikt als `company_id` sleutel
+- `body/invoice_data/email` — ontvangt de factuurmelding via mailing
+
+### event_ended (incoming)
+
+Verstuurd door de frontend aan het einde van het event. Triggert de facturatie van alle resterende items waarvoor geen `invoice_request` is ontvangen.
+
+```xml
+<message>
+  <header>
+    <message_id>d112ac7f-5397-4104-95c7-a4043a1bbec7</message_id>
     <version>2.0</version>
     <type>event_ended</type>
     <timestamp>2026-05-01T22:00:00Z</timestamp>
@@ -108,50 +165,50 @@ Facturatie service
 
 ---
 
-## 4. Why MySQL instead of direct invoicing
+## 4. Waarom MySQL
 
-FossBilling has no API endpoint to add items to an existing invoice incrementally (`admin/invoice/item_add` does not exist in this version). Sending a new invoice per message was rejected because it would create dozens of separate invoices per company per event.
+FossBilling heeft geen API endpoint om items incrementeel toe te voegen aan een bestaande factuur. Een nieuwe factuur per bericht aanmaken zou tientallen losse facturen per bedrijf per event opleveren.
 
-**Solution:** Accumulate all consumption items in a MySQL table during the event. When `event_ended` arrives, read all items per company and create exactly one consolidated invoice with all lines.
+Items worden daarom opgeslagen in MySQL tijdens het event. Bij `invoice_request` of `event_ended` worden de items opgehaald en gebundeld in één factuur per bedrijf.
 
 ---
 
-## 5. Database tables
+## 5. Database tabellen
 
-Both tables are created automatically at service startup via `init_db()` in `src/services/consumption_store.py`.
+Beide tabellen worden automatisch aangemaakt bij het opstarten van de service via `init_db()` in `consumption_store.py`. Kolommen die nog niet bestaan worden automatisch toegevoegd via migraties.
 
 ### pending_consumptions
 
-Stores all consumption items received during an event, grouped per company.
+Slaat alle consumption items op die nog niet gefactureerd zijn.
 
 ```sql
 CREATE TABLE IF NOT EXISTS pending_consumptions (
-    id           INT AUTO_INCREMENT PRIMARY KEY,
-    company_id   VARCHAR(100) NOT NULL,
-    company_name VARCHAR(255) NOT NULL DEFAULT '',
-    email        VARCHAR(255) NOT NULL DEFAULT '',
-    badge_id     VARCHAR(100) NOT NULL,
-    master_uuid  VARCHAR(36)  NOT NULL,
-    description  VARCHAR(255) NOT NULL,
-    price        DECIMAL(10,2) NOT NULL,
-    quantity     INT          NOT NULL DEFAULT 1,
-    vat_rate     VARCHAR(10),
-    received_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_company_id  (company_id),
-    INDEX idx_master_uuid (master_uuid)
+    id                    INT AUTO_INCREMENT PRIMARY KEY,
+    consumption_order_id  VARCHAR(100) NOT NULL,
+    company_id            VARCHAR(100) NOT NULL DEFAULT '',
+    company_name          VARCHAR(255) NOT NULL DEFAULT '',
+    email                 VARCHAR(255) NOT NULL DEFAULT '',
+    badge_id              VARCHAR(100) NOT NULL DEFAULT '',
+    master_uuid           VARCHAR(36)  NOT NULL DEFAULT '',
+    description           VARCHAR(255) NOT NULL,
+    price                 DECIMAL(10,2) NOT NULL,
+    quantity              INT          NOT NULL DEFAULT 1,
+    vat_rate              VARCHAR(10),
+    received_at           DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_company_id           (company_id),
+    INDEX idx_consumption_order_id (consumption_order_id)
 )
 ```
 
-**Column notes:**
-- `company_id` — FossBilling company identifier, used to group items per invoice
-- `company_name` / `email` — stored from the `invoice_request` message for use in the mailing notification
-- `badge_id` — the employee's badge/QR-code ID (`customer_id` from XML)
-- `master_uuid` — from `header/master_uuid`; embedded in invoice line descriptions so the company can trace who ordered what
-- `master_uuid` is NOT NULL and indexed, but NOT UNIQUE — one employee can have multiple rows
+**Kolom toelichting:**
+- `consumption_order_id` — de `message_id` van de `consumption_order`, gebruikt als koppelingssleutel met `invoice_request` via `correlation_id`
+- `company_id` — `customer/id` uit de `consumption_order`, groepeert items per bedrijf voor `event_ended`
+- `company_name` / `email` — worden ingevuld (of bijgewerkt) wanneer de bijhorende `invoice_request` binnenkomt
+- `badge_id` — `customer/user_id` uit de `consumption_order`, verschijnt in de factuurlijn zodat het bedrijf kan traceren wie wat besteld heeft
 
 ### company_accounts
 
-Stores the mapping between a `company_id` and the dedicated FossBilling billing account for that company.
+Slaat de koppeling op tussen een `company_id` en het bijhorende FossBilling billing account.
 
 ```sql
 CREATE TABLE IF NOT EXISTS company_accounts (
@@ -161,71 +218,48 @@ CREATE TABLE IF NOT EXISTS company_accounts (
 )
 ```
 
-**Why this table exists:** When multiple employees of the same company are registered as FossBilling clients, a simple search by company name can return any of them. This table ensures the consolidated invoice always goes to one dedicated billing account per company, regardless of how many employee accounts exist.
-
-The billing account is created automatically the first time `event_ended` fires for a company. It has a generated email (`billing.<company_id>@facturatie.be`) and is never overwritten by employee registrations.
+Elke company krijgt een apart billing account met een gegenereerd emailadres (`billing.<company_id>@facturatie.be`). Zo gaat de geconsolideerde factuur altijd naar hetzelfde account, ongeacht hoeveel medewerkers van dat bedrijf al als FossBilling client staan.
 
 ---
 
-## 6. Files changed
+## 6. Aangepaste bestanden
 
-### `src/services/consumption_store.py` *(new)*
+### `src/services/consumption_store.py`
 
-Handles all MySQL interaction for pending consumptions and company billing accounts.
+| Functie | Doel |
+|---------|------|
+| `init_db()` | Maakt `pending_consumptions` en `company_accounts` tabellen aan bij opstarten, voert migraties uit |
+| `save_items(company_id, badge_id, master_uuid, items, email, company_name, consumption_order_id)` | Slaat items op uit één `consumption_order` bericht |
+| `get_items_by_correlation_id(correlation_id)` | Haalt items op via `consumption_order_id`, gebruikt door de `invoice_request` handler |
+| `update_meta_by_correlation_id(correlation_id, company_name, email)` | Werkt `company_name` en `email` bij op de matching rijen wanneer een `invoice_request` binnenkomt |
+| `get_pending_company_ids()` | Geeft alle `company_id`'s terug met niet-gefactureerde items, gebruikt door `event_ended` |
+| `get_company_meta(company_id)` | Geeft `email` en `company_name` terug voor een bedrijf, gebruikt bij mailing in `event_ended` |
+| `get_items_for_company(company_id)` | Geeft `(items, row_ids)` terug voor alle openstaande items van een bedrijf |
+| `clear_by_ids(row_ids)` | Verwijdert specifieke verwerkte rijen op basis van database ID's |
+| `get_company_client_id(company_id)` | Geeft het opgeslagen FossBilling billing `client_id` terug, of `None` |
+| `save_company_client_id(company_id, client_id)` | Slaat de koppeling tussen `company_id` en billing account op |
 
-| Function | Purpose |
-|----------|---------|
-| `init_db()` | Creates `pending_consumptions` and `company_accounts` tables if they do not exist |
-| `save_items(company_id, badge_id, master_uuid, items, email, company_name)` | Inserts items from one `invoice_request` message |
-| `get_pending_company_ids()` | Returns all company_ids that have uninvoiced items |
-| `get_company_meta(company_id)` | Returns `email` and `company_name` for a company |
-| `get_items_for_company(company_id)` | Returns `(items, row_ids)` — items formatted for FossBilling, row_ids for safe atomic deletion |
-| `clear_by_ids(row_ids)` | Deletes only the specific processed rows by their IDs (prevents race conditions) |
-| `get_company_client_id(company_id)` | Returns the stored FossBilling billing `client_id` for a company, or `None` |
-| `save_company_client_id(company_id, client_id)` | Saves or updates the billing account mapping for a company |
+### `src/services/fossbilling_api.py`
 
-### `src/services/fossbilling_api.py` *(modified)*
+| Functie | Doel |
+|---------|------|
+| `_billing_email(company_id)` | Genereert een consistent billing emailadres voor een bedrijf |
+| `_get_or_create_billing_client(company_id, company_name)` | Zoekt het billing account op in MySQL; maakt het aan in FossBilling als het nog niet bestaat |
+| `process_consumption_order(company_id, items, company_name)` | Maakt één geconsolideerde factuur aan op het billing account van het bedrijf; herprobeert tot 3x |
 
-| Function | Purpose |
-|----------|---------|
-| `_billing_email(company_id)` | Generates a consistent billing email for a company account (e.g. `billing.bedrijf_nv@facturatie.be`) |
-| `_get_or_create_billing_client(company_id, company_name)` | Looks up the company billing account from MySQL; creates it in FossBilling if it does not exist yet |
-| `process_consumption_order(company_id, items, company_name)` | Creates one consolidated invoice on the company billing account; retries up to 3x |
+### `src/services/rabbitmq_receiver.py`
 
-### `src/services/rabbitmq_receiver.py` *(modified)*
-
-| Handler | Behaviour |
-|---------|-----------|
-| `invoice_request` | Reads `master_uuid` from header, `customer_id` as badge_id; saves items + email + company_name to MySQL; acks |
-| `event_ended` | For each company with pending items: creates FossBilling invoice, sends to mailing, clears MySQL |
-| `consumption_order` | **Removed** — replaced by `invoice_request` |
-
-### `src/services/xsd/invoice_request.xsd` *(modified)*
-
-Updated `CustomerType` to use `is_company_linked` (field name confirmed by CRM team).
-
-### `src/main.py` *(modified)*
-
-Added `init_db()` call at service startup.
-
-### `requirements.txt` *(modified)*
-
-Added `mysql-connector-python==9.3.0` and pinned `lxml==6.0.2`.
-
-### `docker-compose.yml` *(modified)*
-
-- Removed obsolete `version: "3.9"` attribute
-- Added `ports: "3306:3306"` for local development access
-
-### `.gitignore` *(modified)*
-
-Added `.venv/` to prevent accidental commits of the virtual environment.
+| Handler | Gedrag |
+|---------|--------|
+| `consumption_order` | Leest `customer/id` als `company_id`, `customer/user_id` als `badge_id`, items uit `body/items`; slaat alles op via `save_items` met `consumption_order_id=msg_id` |
+| `invoice_request` | Leest `correlation_id` uit header; werkt meta bij; haalt items op via `get_items_by_correlation_id`; maakt factuur aan; stuurt mailing; verwijdert verwerkte rijen |
+| `event_ended` | Haalt alle resterende `company_id`'s op; maakt per bedrijf één factuur met alle openstaande items; stuurt mailing; verwijdert verwerkte rijen |
 
 ---
 
-## 7. Invoice line format
+## 7. Factuurlijn formaat
 
-When `get_items_for_company()` prepares items for FossBilling, each line title includes the badge ID:
+Items worden in FossBilling aangemaakt met de badge ID in de titel zodat het bedrijf kan traceren wie wat besteld heeft:
 
 ```
 Coca-Cola (badge: BADGE-001)
@@ -233,142 +267,60 @@ Water (badge: BADGE-001)
 Fanta (badge: BADGE-002)
 ```
 
-This allows the company to trace each line back to the employee who ordered it.
-
 ---
 
-## 8. Tests
+## 8. Lokaal testen
 
-Test file: `tests/test_consumption_order.py` — 28 tests total
+### Vereisten
 
-| Class | Tests |
-|-------|-------|
-| `TestGetClientByCompanyId` | found (exact match), not found, passes company_id, raises on error |
-| `TestGetUnpaidInvoiceForClient` | found, not found, ignores paid, passes client_id |
-| `TestAddItemToInvoice` | sends invoice_id, sends title/price/quantity, raises on error |
-| `TestProcessConsumptionOrder` | creates invoice, raises when company not found, retries on failure, raises after max retries |
-| `TestProcessMessageConsumptionOrder` | happy path ack, company_id/badge_id saved, master_uuid from header, description format, multiple items, DB failure → DLQ, duplicate skipped, invalid XML → DLQ, XSD failure → DLQ |
-| `TestProcessMessageEventEnded` | happy path ack, no pending → ack immediately, FossBilling failure → DLQ, clear_company called after invoice |
+| Wat | Commando |
+|-----|---------|
+| MySQL draait | `docker compose up mysql -d` |
+| RabbitMQ draait | `docker compose up rabbitmq -d` |
+| Mock identity service | `python -m scripts.mock_identity_service` (Terminal 1) |
+| Receiver draait | `python -m src.services.rabbitmq_receiver` (Terminal 2) |
+| FossBilling bereikbaar | check `.env` voor `BILLING_API_URL` en `BILLING_API_TOKEN` |
 
-Run with:
+### Testscript
+
+Het testscript simuleert de volledige flow in drie stappen:
+
 ```bash
-pytest -v -m "not integration"
+python -m scripts.send_test_consumption_flow
 ```
 
----
+**Stap 1** — Drie `consumption_order` berichten worden verstuurd (BADGE-001, BADGE-002, BADGE-003). Items worden opgeslagen in MySQL.
 
-## 9. Setup for teammates
+**Stap 2** — `invoice_request` voor BADGE-001 en BADGE-003. Beide orders worden direct gefactureerd via FossBilling. BADGE-002 krijgt bewust geen `invoice_request`.
 
-If you pulled this branch and want to run or test the service locally:
+**Stap 3** — `event_ended`. De resterende items van BADGE-002 worden opgepikt en gefactureerd.
 
-**1. Copy the environment file**
+### Verwacht resultaat
+
+**FossBilling** — 3 facturen:
+- Bedrijf NV billing account → Coca-Cola + Water (BADGE-001, via invoice_request)
+- Tech Corp billing account → Koffie + Cola (BADGE-003, via invoice_request)
+- Bedrijf NV billing account → Fanta (BADGE-002, via event_ended)
+
+**RabbitMQ `crm.to.mailing`** — 3 `send_mailing` berichten.
+
+**MySQL `pending_consumptions`** — leeg na verwerking.
+
+### Database opkuisen voor herhaalde tests
+
 ```bash
-cp .env.example .env
-```
-Fill in the correct values for `MYSQL_USER`, `MYSQL_PASSWORD`, `RABBITMQ_HOST`, etc.
-
-**2. Install dependencies**
-```bash
-pip install -r requirements.txt
-```
-
-**3. Start MySQL**
-```bash
-docker compose up mysql -d
-```
-
-**4. Tables are created automatically**
-Both `pending_consumptions` and `company_accounts` are created on service startup — no manual SQL needed. Just start the service:
-```bash
-python -m src.main
-```
-
-**5. Test the flow**
-```bash
-python scripts/send_invoice_request.py
-python scripts/send_event_ended.py
-```
-
-Check FossBilling — you should see one invoice per company on the dedicated billing account (`billing.<company>@facturatie.be`).
-
----
-
-## 10. End-to-end test via RabbitMQ
-
-This test uses the real service, real MySQL, and real FossBilling. Two scripts simulate the full flow.
-
-### Requirements
-
-| What | Command |
-|------|---------|
-| MySQL running | `docker compose up mysql -d` |
-| Service running | `python -m src.main` (Terminal 1) |
-| FossBilling reachable | check `.env` for `BILLING_API_URL` and `BILLING_API_TOKEN` |
-| RabbitMQ running | queue `crm.to.facturatie` must exist |
-
-### Steps
-
-**1. Clean up old test data (optional but recommended)**
-
-Delete any leftover rows in MySQL:
-```bash
-docker exec -it facturatie-mysql-1 mysql -u fossbilling -pfossbilling fossbilling
-```
-```sql
-DELETE FROM pending_consumptions;
-DELETE FROM company_accounts;
-EXIT;
-```
-
-Delete old test invoices in FossBilling via the admin interface.
-
-**2. Send consumption items for two companies**
-```bash
-python scripts/send_invoice_request.py
-```
-This sends three `invoice_request` messages:
-- **BADGE-001** (Jan Peeters / Bedrijf NV): Coca-Cola + Water
-- **BADGE-002** (Marie Janssen / Bedrijf NV): Fanta
-- **BADGE-003** (Piet Janssen / Tech Corp): Coffee
-- **BADGE-004** (Sara Jan / Tech Corp): Cola + Fanta
-
-Items are saved in MySQL `pending_consumptions`. No FossBilling invoice is created yet.
-
-**3. Trigger end-of-event invoicing**
-```bash
-python scripts/send_event_ended.py
-```
-
-The service will:
-1. Find all companies with pending items
-2. For each company: look up or create a dedicated billing account in FossBilling
-3. Create one consolidated invoice per company
-4. Clear the processed rows from MySQL
-5. Send an invoice notification to `facturatie.to.mailing`
-
-**4. Verify in FossBilling**
-
-Go to **Invoices** in the FossBilling admin. You should see:
-- **Bedrijf NV billing account** → 1 invoice with Coca-Cola + Water + Fanta (all BADGE-001 and BADGE-002 lines)
-- **Tech Corp billing account** → 1 invoice with Koffie + Cola + Fanta (all BADGE-003 and BADGE-004 lines)
-
-The billing accounts have emails like `billing.bedrijf_nv@facturatie.be` and are separate from the individual employee accounts.
-
-### Automated integration test (MySQL only, FossBilling mocked)
-
-```powershell
-$env:MYSQL_HOST = "localhost"; pytest -m integration -v
+docker exec -it <mysql-container-naam> mysql -u fossbilling -p<wachtwoord> fossbilling -e "DELETE FROM pending_consumptions; DELETE FROM company_accounts;"
 ```
 
 ---
 
-## 11. Security notes
+## 9. Security
 
-| Area | Status |
-|------|--------|
-| Credentials in code | None — all via `.env` and `os.getenv()` |
-| `.env` in git | Excluded via `.gitignore` |
-| SQL injection | Protected — all queries use parameterized `%s` placeholders |
-| XML injection (incoming) | Protected — `defusedxml` used for all incoming XML parsing |
-| XML injection (outgoing) | Protected — `ElementTree` auto-escapes all values |
-| Virtual env in git | Protected — `.venv/` added to `.gitignore` |
+| Gebied | Status |
+|--------|--------|
+| Credentials in code | Geen — alles via `.env` en `os.getenv()` |
+| `.env` in git | Uitgesloten via `.gitignore` |
+| SQL injection | Beschermd — alle queries gebruiken geparametriseerde `%s` placeholders |
+| XML injection (inkomend) | Beschermd — `defusedxml` gebruikt voor alle inkomende XML parsing |
+| XML injection (uitgaand) | Beschermd — `ElementTree` escaped alle waarden automatisch |
+| Virtual env in git | Beschermd — `.venv/` toegevoegd aan `.gitignore` |

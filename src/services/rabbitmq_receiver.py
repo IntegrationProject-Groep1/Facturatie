@@ -382,6 +382,14 @@ def process_message(
             payment_method = transaction_el.findtext("payment_method") or ""
             transaction_id = transaction_el.findtext("id") or ""
 
+            # Inkomende waarden (Kassa) mappen naar outgoing waarden (contract §8.2)
+            payment_method_map = {
+                "on_site":      "cash",
+                "online":       "card",
+                "company_link": "bank_transfer",
+            }
+            payment_method_out = payment_method_map.get(payment_method, "cash")
+
             user_id = root.findtext("body/user_id") or ""
 
             print(
@@ -402,7 +410,7 @@ def process_message(
                 customer_id=user_id,
                 amount=amount,
                 currency=currency,
-                payment_method=payment_method,
+                payment_method=payment_method_out,
                 paid_at=paid_at,
             )
             send_message(
