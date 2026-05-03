@@ -35,25 +35,27 @@ def init_db() -> None:
         with conn.cursor() as cursor:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pending_consumptions (
-                    id           INT AUTO_INCREMENT PRIMARY KEY,
-                    company_id   VARCHAR(100) NOT NULL,
-                    company_name VARCHAR(255) NOT NULL DEFAULT '',
-                    email        VARCHAR(255) NOT NULL DEFAULT '',
-                    badge_id     VARCHAR(100) NOT NULL,
-                    master_uuid  VARCHAR(36)  NOT NULL,
-                    description  VARCHAR(255) NOT NULL,
-                    price        DECIMAL(10,2) NOT NULL,
-                    quantity     INT          NOT NULL DEFAULT 1,
-                    vat_rate     VARCHAR(10),
-                    received_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+                    id                    INT AUTO_INCREMENT PRIMARY KEY,
+                    consumption_order_id  VARCHAR(100) NOT NULL,
+                    company_id            VARCHAR(100) NOT NULL DEFAULT '',
+                    company_name          VARCHAR(255) NOT NULL DEFAULT '',
+                    email                 VARCHAR(255) NOT NULL DEFAULT '',
+                    badge_id              VARCHAR(100) NOT NULL DEFAULT '',
+                    master_uuid           VARCHAR(36)  NOT NULL DEFAULT '',
+                    description           VARCHAR(255) NOT NULL,
+                    price                 DECIMAL(10,2) NOT NULL,
+                    quantity              INT          NOT NULL DEFAULT 1,
+                    vat_rate              VARCHAR(10),
+                    received_at           DATETIME     DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_company_id  (company_id),
-                    INDEX idx_master_uuid (master_uuid)
+                    INDEX idx_consumption_order_id (consumption_order_id)
                 )
             """)
 
             migrations = [
                 ("company_name", "VARCHAR(255) NOT NULL DEFAULT ''"),
                 ("email", "VARCHAR(255) NOT NULL DEFAULT ''"),
+                ("consumption_order_id", "VARCHAR(100) NOT NULL DEFAULT ''"),
             ]
 
             for col_name, col_def in migrations:
@@ -92,15 +94,19 @@ def save_items(
     items: list[dict],
     email: str = "",
     company_name: str = "",
+    consumption_order_id: str = "",
 ) -> None:
     """Stores consumption items in MySQL for later invoicing."""
+    if not items:
+        return
     query = """
         INSERT INTO pending_consumptions
-            (company_id, company_name, email, badge_id, master_uuid, description, price, quantity, vat_rate)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (consumption_order_id, company_id, company_name, email, badge_id, master_uuid,
+             description, price, quantity, vat_rate)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     data = [
-        (company_id, company_name, email, badge_id, master_uuid,
+        (consumption_order_id, company_id, company_name, email, badge_id, master_uuid,
          i["description"], i["price"], i.get("quantity", 1), i.get("vat_rate", ""))
         for i in items
     ]
@@ -111,7 +117,8 @@ def save_items(
         conn.commit()
     finally:
         conn.close()
-    logging.info("[DB] Saved %d items for company_id=%s badge_id=%s", len(items), company_id, badge_id)
+    logging.info("[DB] Saved %d items | consumption_order_id=%s | company_id=%s",
+                 len(items), consumption_order_id, company_id)
 
 
 def get_pending_company_ids() -> list[str]:
@@ -127,7 +134,7 @@ def get_pending_company_ids() -> list[str]:
 
 
 def get_company_meta(company_id: str) -> dict:
-    """Returns email and company_name for a company from the first pending row."""
+    """Returns email, company_name and other meta for a company from the first pending row."""
     conn = _get_connection()
     try:
         with conn.cursor(dictionary=True) as cursor:
@@ -139,8 +146,63 @@ def get_company_meta(company_id: str) -> dict:
     finally:
         conn.close()
     if row is None:
-        return {"email": "", "company_name": ""}
-    return {"email": row["email"], "company_name": row["company_name"]}
+        return {"email": "", "company_name": "", "first_name": "", "last_name": "", "customer_id": ""}
+    return {
+        "email": row["email"],
+        "company_name": row["company_name"],
+        "first_name": "",
+        "last_name": "",
+        "customer_id": "",
+    }
+
+
+def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[int]]:
+    """Returns (items, row_ids) for a specific consumption_order matched by its message_id."""
+    conn = _get_connection()
+    try:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute(
+                "SELECT * FROM pending_consumptions WHERE consumption_order_id = %s ORDER BY received_at",
+                (correlation_id,),
+            )
+            rows = cursor.fetchall()
+    finally:
+        conn.close()
+
+    items = [
+        {
+            "title": f"{row['description']} (badge: {row['badge_id']})" if row['badge_id'] else row['description'],
+            "price": str(row["price"]),
+            "quantity": row["quantity"],
+            "vat_rate": row["vat_rate"] or "",
+        }
+        for row in rows
+    ]
+    row_ids = [row["id"] for row in rows]
+    return items, row_ids
+
+
+def update_meta_by_correlation_id(
+    correlation_id: str,
+    company_name: str,
+    email: str,
+) -> int:
+    """Updates company_name and email on all rows matching a consumption_order_id.
+    Returns the number of rows updated."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE pending_consumptions SET company_name = %s, email = %s "
+                "WHERE consumption_order_id = %s",
+                (company_name, email, correlation_id),
+            )
+            updated = cursor.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    logging.info("[DB] Updated meta for correlation_id=%s | rows=%d", correlation_id, updated)
+    return updated
 
 
 def get_company_client_id(company_id: str) -> int | None:

@@ -247,8 +247,7 @@ CRM_QUEUE = os.getenv("QUEUE_CRM", "facturatie.to.crm")
 
 def build_invoice_cancelled_xml(
     invoice_id: str,
-    master_uuid: str,
-    correlation_id: str,
+    customer_id: str,
     reason: str | None = None,
 ) -> str:
     """Builds an invoice_cancelled XML message to notify the CRM system."""
@@ -259,15 +258,14 @@ def build_invoice_cancelled_xml(
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
-    ET.SubElement(header, "master_uuid").text = master_uuid
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "invoice_cancelled"
     ET.SubElement(header, "timestamp").text = timestamp
-    ET.SubElement(header, "source").text = "facturatie_system"
-    ET.SubElement(header, "correlation_id").text = correlation_id
+    ET.SubElement(header, "source").text = "facturatie"
+    ET.SubElement(header, "type").text = "invoice_cancelled"
+    ET.SubElement(header, "version").text = "2.0"
 
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "invoice_number").text = invoice_id
+    ET.SubElement(body, "invoice_id").text = invoice_id
+    ET.SubElement(body, "customer_id").text = customer_id
     if reason:
         ET.SubElement(body, "reason").text = reason
 
@@ -280,12 +278,11 @@ def build_invoice_cancelled_xml(
 
 def publish_invoice_cancelled(
     invoice_id: str,
-    master_uuid: str,
-    correlation_id: str,
+    customer_id: str,
     channel: pika.channel.Channel | None = None,
 ) -> None:
     """Publishes an invoice_cancelled notification to the CRM queue."""
-    xml_message = build_invoice_cancelled_xml(invoice_id, master_uuid, correlation_id)
+    xml_message = build_invoice_cancelled_xml(invoice_id, customer_id)
     send_message(xml_message, routing_key=CRM_QUEUE, channel=channel)
     logging.info(
         "[SENDER] invoice_cancelled sent to '%s' | invoice_id=%s",
@@ -295,13 +292,12 @@ def publish_invoice_cancelled(
 
 def publish_cancellation_failed(
     invoice_id: str,
-    master_uuid: str,
-    correlation_id: str,
+    customer_id: str,
     reason: str,
     channel: pika.channel.Channel | None = None,
 ) -> None:
     """Publishes a failed invoice_cancelled message to CRM when a cancellation is blocked."""
-    xml_message = build_invoice_cancelled_xml(invoice_id, master_uuid, correlation_id, reason)
+    xml_message = build_invoice_cancelled_xml(invoice_id, customer_id, reason)
     send_message(xml_message, routing_key=CRM_QUEUE, channel=channel)
     logging.info(
         "[SENDER] cancellation_failed sent to '%s' | invoice_id=%s | reason=%s",
