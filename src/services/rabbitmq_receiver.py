@@ -23,8 +23,6 @@ from src.services.rabbitmq_utils import (
 from src.services import fossbilling_api as fossbilling_client
 from src.services.identity_client import request_master_uuid
 from src.services import consumption_store
-
-consumption_store.init_db()
 VALID_TYPES: set[str] = {
     "payment_registered", "heartbeat", "new_registration",
     "invoice_request", "invoice_cancelled", "event_ended",
@@ -510,6 +508,8 @@ def process_message(
 def start_receiver(queue: str | None = None) -> None:
     if queue is None:
         queue = os.getenv("QUEUE_INCOMING", "facturatie.incoming")
+
+    consumption_store.init_db()
 
     connection = get_connection()
     channel = connection.channel()
