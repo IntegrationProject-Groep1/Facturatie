@@ -6,21 +6,27 @@ from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import fromstring as defused_fromstring
+from datetime import datetime, timezone
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
-from .rabbitmq_sender import build_invoice_created_notification_xml, build_payment_confirmed_xml, send_message
+from .rabbitmq_sender import (
+    build_invoice_created_notification_xml,
+    build_payment_confirmed_xml,
+    publish_cancellation_failed,
+    publish_invoice_cancelled,
+    send_message,
+)
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq
 )
-from src.services import fossbilling_api as fossbilling_client, crm_publisher
+from src.services import fossbilling_api as fossbilling_client
 from src.services.identity_client import request_master_uuid
 from src.services import consumption_store
-
-# Valid values per XML Naming Standard (all lowercase snake_case)
 VALID_TYPES: set[str] = {
     "payment_registered", "heartbeat", "new_registration",
-    "invoice_request", "invoice_cancelled", "event_ended"
+    "invoice_request", "invoice_cancelled", "event_ended",
+    "consumption_order"
 }
 VALID_VAT_RATES: set[str] = {"6", "12", "21"}
 VALID_PAYMENT_METHODS: set[str] = {"company_link", "on_site", "online"}
@@ -52,12 +58,15 @@ def validate_invoice_cancelled(root: ET.Element) -> list[str]:
 
 
 def extract_customer_data(root: ET.Element) -> dict:
-    """Extracts customer and registration data from a new_registration XML message."""
+    """
+    Extracts customer and registration data from a new_registration XML message.
+    """
     fee_el = root.find("body/registration_fee")
     return {
+        "customer_id": root.findtext("body/customer/customer_id") or "",
         "email": root.findtext("body/customer/email"),
-        "first_name": root.findtext("body/customer/first_name") or "",
-        "last_name": root.findtext("body/customer/last_name") or "",
+        "first_name": root.findtext("body/customer/contact/first_name") or "",
+        "last_name": root.findtext("body/customer/contact/last_name") or "",
         "company_name": root.findtext("body/customer/company_name") or "",
         "address": {
             field: root.findtext(f"body/customer/address/{field}") or ""
@@ -69,29 +78,32 @@ def extract_customer_data(root: ET.Element) -> dict:
 
 
 def extract_invoice_request_data(root: ET.Element) -> dict:
-    """Extracts customer and items data from an invoice_request XML message."""
-    customer = {
-        "email": root.findtext("body/customer/email"),
-        "first_name": root.findtext("body/customer/first_name") or "",
-        "last_name": root.findtext("body/customer/last_name") or "",
-        "company_name": root.findtext("body/customer/company_name") or "",
-        "address": {
-            field: root.findtext(f"body/customer/address/{field}") or ""
-            for field in ["street", "number", "postal_code", "city", "country"]
+    """
+    Extracts billing data from an invoice_request XML message (CRM → Facturatie).
+    """
+    invoice_data_el = root.find("body/invoice_data")
+    address = {}
+    if invoice_data_el is not None:
+        addr_el = invoice_data_el.find("address")
+        if addr_el is not None:
+            address = {
+                field: addr_el.findtext(field) or ""
+                for field in ["street", "number", "postal_code", "city", "country"]
+            }
+
+    return {
+        "user_id": root.findtext("body/user_id") or "",
+        "correlation_id": root.findtext("header/correlation_id") or "",
+        "customer": {
+            # Namen zitten direct in <invoice_data> — geen <contact> wrapper (§11.1 uitzondering)
+            "first_name": root.findtext("body/invoice_data/first_name") or "",
+            "last_name": root.findtext("body/invoice_data/last_name") or "",
+            "email": root.findtext("body/invoice_data/email") or "",
+            "company_name": root.findtext("body/invoice_data/company_name") or "",
+            "vat_number": root.findtext("body/invoice_data/vat_number") or "",
+            "address": address,
         },
     }
-    items = []
-    for item_el in root.findall("body/items/item"):
-        unit_price_el = item_el.find("unit_price")
-        items.append({
-            "title": item_el.findtext("description") or "",
-            "price": item_el.findtext("unit_price") or "0",
-            "quantity": int(item_el.findtext("quantity") or 1),
-            "currency": unit_price_el.get("currency", "eur") if unit_price_el is not None else "eur",
-            "vat_rate": item_el.findtext("vat_rate") or "",
-            "sku": item_el.findtext("sku") or "",
-        })
-    return {"customer": customer, "items": items}
 
 
 def process_message(
@@ -166,57 +178,121 @@ def process_message(
             invoice_id=invoice_id,
             recipient_email=customer_data["email"],
             correlation_id=msg_id,
-            company_name=customer_data.get("company_name", ""),
-            master_uuid=master_uuid,
+            first_name=customer_data.get("first_name", ""),
+            last_name=customer_data.get("last_name", ""),
+            customer_id=customer_data.get("customer_id", ""),
         )
 
         send_message(
             notification_xml,
-            routing_key="facturatie.to.mailing",
+            routing_key="crm.to.mailing",
             channel=channel
         )
 
         print(
-            f"[RECEIVER] invoice_created_notification sent | invoice_id={invoice_id}"
+            f"[RECEIVER] send_mailing sent | invoice_id={invoice_id}"
             f" | correlation_id={msg_id}"
         )
 
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
     elif msg_type == "invoice_request":
-        is_company_linked = root.findtext("body/customer/is_company_linked") == "true"
-        company_id = root.findtext("body/customer/company_id")
-        badge_id = root.findtext("body/customer/customer_id") or ""
-        master_uuid = root.findtext("header/master_uuid") or badge_id
-        email = root.findtext("body/customer/email") or ""
-        company_name = root.findtext("body/customer/company_name") or ""
+        data = extract_invoice_request_data(root)
+        user_id = data["user_id"]
+        correlation_id = data["correlation_id"]
+        customer = data["customer"]
+        company_name = customer["company_name"]
+        if not company_name:
+            send_to_dlq(channel, body, ["ERROR: invoice_request requires company_name in invoice_data"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
 
-        if not is_company_linked or not company_id:
-            send_to_dlq(channel, body, ["ERROR: invoice_request requires is_company=true and company_id"])
+        try:
+            consumption_store.update_meta_by_correlation_id(
+                correlation_id=correlation_id,
+                company_name=company_name,
+                email=customer["email"],
+            )
+
+            items, row_ids, company_id = consumption_store.get_items_by_correlation_id(correlation_id)
+            if not items:
+                logging.warning(
+                    "[RECEIVER] invoice_request: no items found for correlation_id=%s — ack without invoice",
+                    correlation_id,
+                )
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+                return
+
+            invoice_id = fossbilling_client.process_consumption_order(
+                company_id, items, company_name=company_name
+            )
+
+            consumption_store.clear_by_ids(row_ids)
+
+            try:
+                notification_xml = build_invoice_created_notification_xml(
+                    invoice_id=invoice_id,
+                    recipient_email=customer["email"],
+                    correlation_id=msg_id,
+                    first_name=customer.get("first_name", ""),
+                    last_name=customer.get("last_name", ""),
+                    customer_id=user_id,
+                    subject=f"Uw factuur {invoice_id} staat klaar",
+                )
+                send_message(notification_xml, routing_key="crm.to.mailing", channel=channel)
+            except Exception as mail_err:
+                logging.warning("[RECEIVER] Invoice created but mailing failed: %s", mail_err)
+
+            logging.info(
+                "[RECEIVER] invoice_request processed | invoice_id=%s | correlation_id=%s",
+                invoice_id, correlation_id,
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+
+        except Exception as e:
+            logging.error("[RECEIVER] ERROR: invoice_request_failed: %s", e)
+            send_to_dlq(channel, body, [f"ERROR: invoice_request_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+    elif msg_type == "consumption_order":
+        customer_id = root.findtext("body/customer/id") or ""
+        user_id = root.findtext("body/customer/user_id") or ""
+        email = root.findtext("body/customer/email") or ""
+
+        item_elements = root.findall("body/items/item")
+        if not item_elements:
+            send_to_dlq(channel, body, ["ERROR: consumption_order has no items"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
         items = []
-        for item_el in root.findall("body/items/item"):
-            description = item_el.findtext("description") or ""
+        for item_el in item_elements:
             unit_price_el = item_el.find("unit_price")
+            price = unit_price_el.text if unit_price_el is not None else "0.00"
             items.append({
-                "description": description,
-                "price": unit_price_el.text if unit_price_el is not None else "0",
-                "quantity": int(item_el.findtext("quantity") or 1),
+                "description": item_el.findtext("description") or "",
+                "price": price,
+                "quantity": int(item_el.findtext("quantity") or "1"),
                 "vat_rate": item_el.findtext("vat_rate") or "",
             })
 
         try:
-            consumption_store.save_items(company_id, badge_id, master_uuid, items, email, company_name)
+            consumption_store.save_items(
+                company_id=customer_id,
+                badge_id=user_id,
+                master_uuid=user_id,
+                items=items,
+                email=email,
+                consumption_order_id=msg_id,
+            )
             logging.info(
-                "[RECEIVER] invoice_request saved | company_id=%s | badge_id=%s | items=%d",
-                company_id, badge_id, len(items),
+                "[RECEIVER] consumption_order saved | message_id=%s | customer_id=%s | items=%d",
+                msg_id, customer_id, len(items),
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:
-            logging.error("[RECEIVER] ERROR: invoice_request_save_failed: %s", e)
-            send_to_dlq(channel, body, [f"ERROR: invoice_request_save_failed: {e}"])
+            logging.error("[RECEIVER] ERROR: consumption_order_save_failed: %s", e)
+            send_to_dlq(channel, body, [f"ERROR: consumption_order_save_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     elif msg_type == "event_ended":
@@ -237,23 +313,23 @@ def process_message(
                     if not items:
                         continue
                     meta = consumption_store.get_company_meta(company_id)
-                    invoice_id = fossbilling_client.process_consumption_order(company_id, items)
+                    invoice_id = fossbilling_client.process_consumption_order(
+                        company_id, items, company_name=meta["company_name"]
+                    )
 
                     consumption_store.clear_by_ids(row_ids)
 
                     try:
-                        billing_url = os.getenv('BILLING_WEB_URL', 'https://portal.yourdomain.com').rstrip('/')
-                        pdf_url = f"{billing_url}/invoice/{invoice_id}"
-
                         notification_xml = build_invoice_created_notification_xml(
                             invoice_id=invoice_id,
                             recipient_email=meta["email"],
-                            master_uuid=master_uuid,
+                            correlation_id=msg_id,
+                            first_name=meta.get("first_name", ""),
+                            last_name=meta.get("last_name", ""),
+                            customer_id=meta.get("customer_id", ""),
                             subject=f"Uw factuur {invoice_id} staat klaar",
-                            message_text="Bedankt voor uw gebruik van onze diensten. In de bijlage vindt u de details.",
-                            pdf_url=pdf_url
                         )
-                        send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
+                        send_message(notification_xml, routing_key="crm.to.mailing", channel=channel)
                     except Exception as mail_err:
                         # We loggen de mail fout, maar gaan door (de factuur is immers al klaar)
                         logging.warning("[RECEIVER] Invoice created but mail failed for %s: %s", company_id, mail_err)
@@ -281,13 +357,12 @@ def process_message(
         print("[RECEIVER] Handling payment_registered")
 
         try:
-            # Extract invoice info
+            # Extract invoice info — inkomend formaat (Kassa→Facturatie via CRM passthrough)
             invoice_el = root.find("body/invoice")
             if invoice_el is None:
                 raise ValueError("Missing <invoice> element")
 
             invoice_id = invoice_el.findtext("id")
-            due_date = invoice_el.findtext("due_date") or ""
             if not invoice_id:
                 raise ValueError("Missing invoice id in <invoice><id>")
 
@@ -303,6 +378,16 @@ def process_message(
             payment_method = transaction_el.findtext("payment_method") or ""
             transaction_id = transaction_el.findtext("id") or ""
 
+            # Inkomende waarden (Kassa) mappen naar outgoing waarden (contract §8.2)
+            payment_method_map = {
+                "on_site":      "cash",
+                "online":       "card",
+                "company_link": "bank_transfer",
+            }
+            payment_method_out = payment_method_map.get(payment_method, "cash")
+
+            user_id = root.findtext("body/user_id") or ""
+
             print(
                 f"[RECEIVER] Payment data extracted"
                 f" | invoice_id={invoice_id} | amount={amount} {currency}"
@@ -315,15 +400,14 @@ def process_message(
 
             print(f"[RECEIVER] Payment registered in FossBilling | invoice_id={invoice_id}")
 
-            # Step 5: publish payment_registered confirmation to RabbitMQ
+            paid_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             confirmation_xml = build_payment_confirmed_xml(
                 invoice_id=invoice_id,
+                customer_id=user_id,
                 amount=amount,
                 currency=currency,
-                payment_method=payment_method,
-                transaction_id=transaction_id,
-                correlation_id=msg_id,
-                due_date=due_date
+                payment_method=payment_method_out,
+                paid_at=paid_at,
             )
             send_message(
                 confirmation_xml,
@@ -351,24 +435,23 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        invoice_id = root.findtext("body/invoice/id")
-        customer_id = root.findtext("body/customer/id")
-        correlation_id = root.findtext("header/correlation_id")
+        invoice_id = root.findtext("body/invoice_id")
+        customer_id = root.findtext("body/customer_id") or ""
+        correlation_id = root.findtext("header/message_id")
 
         if not invoice_id:
             send_to_dlq(channel, body, ["ERROR: missing invoice_id in invoice_cancelled message"])
-            crm_publisher.publish_cancellation_failed(
+            publish_cancellation_failed(
                 invoice_id="unknown",
                 customer_id=customer_id,
-                correlation_id=correlation_id,
                 reason="missing_invoice_id",
+                channel=channel,
             )
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
         print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
 
-        # Step: check invoice status before cancelling
         try:
             status = fossbilling_client.get_invoice_status(invoice_id)
         except Exception as e:
@@ -382,8 +465,11 @@ def process_message(
             logging.warning(
                 "[RECEIVER][%s] Invoice '%s' not found in FossBilling", msg_type, invoice_id
             )
-            crm_publisher.publish_cancellation_failed(
-                invoice_id, customer_id, correlation_id, reason="invoice_not_found"
+            publish_cancellation_failed(
+                invoice_id,
+                customer_id=customer_id,
+                reason="invoice_not_found",
+                channel=channel,
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
@@ -394,8 +480,11 @@ def process_message(
                 "[RECEIVER][%s] Cancellation blocked — invoice '%s' has status '%s'",
                 msg_type, invoice_id, status
             )
-            crm_publisher.publish_cancellation_failed(
-                invoice_id, customer_id, correlation_id, reason=reason
+            publish_cancellation_failed(
+                invoice_id,
+                customer_id=customer_id,
+                reason=reason,
+                channel=channel,
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
@@ -407,7 +496,7 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
+        publish_invoice_cancelled(invoice_id, customer_id, channel=channel)
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -418,13 +507,14 @@ def process_message(
 
 def start_receiver(queue: str | None = None) -> None:
     if queue is None:
-        # Check environment variable, default to the new CRM queue name if not set
-        queue = os.getenv("QUEUE_INCOMING", "crm.to.facturatie")
+        queue = os.getenv("QUEUE_INCOMING", "facturatie.incoming")
+
+    consumption_store.init_db()
 
     connection = get_connection()
     channel = connection.channel()
 
-    channel.queue_declare(queue=queue, passive=True)
+    channel.queue_declare(queue=queue, passive=False, durable=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=process_message)
 

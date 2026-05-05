@@ -35,25 +35,27 @@ def init_db() -> None:
         with conn.cursor() as cursor:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pending_consumptions (
-                    id           INT AUTO_INCREMENT PRIMARY KEY,
-                    company_id   VARCHAR(100) NOT NULL,
-                    company_name VARCHAR(255) NOT NULL DEFAULT '',
-                    email        VARCHAR(255) NOT NULL DEFAULT '',
-                    badge_id     VARCHAR(100) NOT NULL,
-                    master_uuid  VARCHAR(36)  NOT NULL,
-                    description  VARCHAR(255) NOT NULL,
-                    price        DECIMAL(10,2) NOT NULL,
-                    quantity     INT          NOT NULL DEFAULT 1,
-                    vat_rate     VARCHAR(10),
-                    received_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+                    id                    INT AUTO_INCREMENT PRIMARY KEY,
+                    consumption_order_id  VARCHAR(100) NOT NULL,
+                    company_id            VARCHAR(100) NOT NULL DEFAULT '',
+                    company_name          VARCHAR(255) NOT NULL DEFAULT '',
+                    email                 VARCHAR(255) NOT NULL DEFAULT '',
+                    badge_id              VARCHAR(100) NOT NULL DEFAULT '',
+                    master_uuid           VARCHAR(36)  NOT NULL DEFAULT '',
+                    description           VARCHAR(255) NOT NULL,
+                    price                 DECIMAL(10,2) NOT NULL,
+                    quantity              INT          NOT NULL DEFAULT 1,
+                    vat_rate              VARCHAR(10),
+                    received_at           DATETIME     DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_company_id  (company_id),
-                    INDEX idx_master_uuid (master_uuid)
+                    INDEX idx_consumption_order_id (consumption_order_id)
                 )
             """)
 
             migrations = [
                 ("company_name", "VARCHAR(255) NOT NULL DEFAULT ''"),
                 ("email", "VARCHAR(255) NOT NULL DEFAULT ''"),
+                ("consumption_order_id", "VARCHAR(100) NOT NULL DEFAULT ''"),
             ]
 
             for col_name, col_def in migrations:
@@ -68,13 +70,21 @@ def init_db() -> None:
                     cursor.execute(f"ALTER TABLE pending_consumptions ADD COLUMN {col_name} {col_def}")
                     logging.info(f"[DB] Migration: Added column {col_name} to pending_consumptions")
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS company_accounts (
+                    company_id            VARCHAR(100) PRIMARY KEY,
+                    fossbilling_client_id INT NOT NULL,
+                    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
         conn.commit()
     except Exception as e:
         logging.error(f"[DB] Error initializing database: {e}")
         raise
     finally:
         conn.close()
-    logging.info("[DB] pending_consumptions table ready")
+    logging.info("[DB] Tables ready (pending_consumptions, company_accounts)")
 
 
 def save_items(
@@ -84,15 +94,19 @@ def save_items(
     items: list[dict],
     email: str = "",
     company_name: str = "",
+    consumption_order_id: str = "",
 ) -> None:
     """Stores consumption items in MySQL for later invoicing."""
+    if not items:
+        return
     query = """
         INSERT INTO pending_consumptions
-            (company_id, company_name, email, badge_id, master_uuid, description, price, quantity, vat_rate)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (consumption_order_id, company_id, company_name, email, badge_id, master_uuid,
+             description, price, quantity, vat_rate)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     data = [
-        (company_id, company_name, email, badge_id, master_uuid,
+        (consumption_order_id, company_id, company_name, email, badge_id, master_uuid,
          i["description"], i["price"], i.get("quantity", 1), i.get("vat_rate", ""))
         for i in items
     ]
@@ -103,7 +117,8 @@ def save_items(
         conn.commit()
     finally:
         conn.close()
-    logging.info("[DB] Saved %d items for company_id=%s badge_id=%s", len(items), company_id, badge_id)
+    logging.info("[DB] Saved %d items | consumption_order_id=%s | company_id=%s",
+                 len(items), consumption_order_id, company_id)
 
 
 def get_pending_company_ids() -> list[str]:
@@ -119,7 +134,7 @@ def get_pending_company_ids() -> list[str]:
 
 
 def get_company_meta(company_id: str) -> dict:
-    """Returns email and company_name for a company from the first pending row."""
+    """Returns email, company_name and other meta for a company from the first pending row."""
     conn = _get_connection()
     try:
         with conn.cursor(dictionary=True) as cursor:
@@ -131,8 +146,95 @@ def get_company_meta(company_id: str) -> dict:
     finally:
         conn.close()
     if row is None:
-        return {"email": "", "company_name": ""}
-    return {"email": row["email"], "company_name": row["company_name"]}
+        return {"email": "", "company_name": "", "first_name": "", "last_name": "", "customer_id": ""}
+    return {
+        "email": row["email"],
+        "company_name": row["company_name"],
+        "first_name": "",
+        "last_name": "",
+        "customer_id": "",
+    }
+
+
+def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[int], str]:
+    """Returns (items, row_ids, company_id) for a specific consumption_order matched by its message_id."""
+    conn = _get_connection()
+    try:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute(
+                "SELECT * FROM pending_consumptions WHERE consumption_order_id = %s ORDER BY received_at",
+                (correlation_id,),
+            )
+            rows = cursor.fetchall()
+    finally:
+        conn.close()
+
+    items = [
+        {
+            "title": f"{row['description']} (badge: {row['badge_id']})" if row['badge_id'] else row['description'],
+            "price": str(row["price"]),
+            "quantity": row["quantity"],
+            "vat_rate": row["vat_rate"] or "",
+        }
+        for row in rows
+    ]
+    row_ids = [row["id"] for row in rows]
+    company_id = rows[0]["company_id"] if rows else ""
+    return items, row_ids, company_id
+
+
+def update_meta_by_correlation_id(
+    correlation_id: str,
+    company_name: str,
+    email: str,
+) -> int:
+    """Updates company_name and email on all rows matching a consumption_order_id.
+    Returns the number of rows updated."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE pending_consumptions SET company_name = %s, email = %s "
+                "WHERE consumption_order_id = %s",
+                (company_name, email, correlation_id),
+            )
+            updated = cursor.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    logging.info("[DB] Updated meta for correlation_id=%s | rows=%d", correlation_id, updated)
+    return updated
+
+
+def get_company_client_id(company_id: str) -> int | None:
+    """Returns the FossBilling billing client_id for a company, or None if not yet registered."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT fossbilling_client_id FROM company_accounts WHERE company_id = %s",
+                (company_id,),
+            )
+            row = cursor.fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row else None
+
+
+def save_company_client_id(company_id: str, client_id: int) -> None:
+    """Saves or updates the FossBilling billing client_id for a company."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO company_accounts (company_id, fossbilling_client_id) VALUES (%s, %s) "
+                "ON DUPLICATE KEY UPDATE fossbilling_client_id = %s",
+                (company_id, client_id, client_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    logging.info("[DB] Company billing account saved: company_id=%s → client_id=%s", company_id, client_id)
 
 
 def get_items_for_company(company_id: str) -> tuple[list[dict], list[int]]:

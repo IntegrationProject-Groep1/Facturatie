@@ -1,9 +1,11 @@
 import logging
 import os
+import re
 import time
 import uuid
 import requests
 from dotenv import load_dotenv
+from .consumption_store import get_company_client_id, save_company_client_id
 
 load_dotenv()
 
@@ -219,7 +221,44 @@ def add_item_to_invoice(invoice_id: str, item: dict) -> None:
     _api_post("admin/invoice/item_add", payload)
 
 
-def process_consumption_order(company_id: str, items: list[dict]) -> str:
+def _billing_email(company_id: str) -> str:
+    safe = re.sub(r"[^a-z0-9]", "_", company_id.lower())
+    return f"billing.{safe}@facturatie.be"
+
+
+def _get_or_create_billing_client(company_id: str, company_name: str) -> int:
+    """Returns the FossBilling client_id for the company billing account, creating it if needed."""
+    client_id = get_company_client_id(company_id)
+    if client_id is not None:
+        return client_id
+
+    email = _billing_email(company_id)
+    existing_id = _get_client_by_email(email)
+    if existing_id is not None:
+        save_company_client_id(company_id, existing_id)
+        return existing_id
+
+    payload = {
+        "email": email,
+        "first_name": company_name or company_id,
+        "last_name": "-",
+        "password": f"Billing-{uuid.uuid4()}",
+        "password_confirm": "",
+        "company": company_name or company_id,
+        "currency": "EUR",
+        "country": "BE",
+    }
+    result = _api_post("admin/client/create", payload)
+    new_id = int(result["result"])
+    save_company_client_id(company_id, new_id)
+    logging.info(
+        "[FOSSBILLING] Company billing account created | company_id=%s | client_id=%s",
+        company_id, new_id,
+    )
+    return new_id
+
+
+def process_consumption_order(company_id: str, items: list[dict], company_name: str = "") -> str:
     """
     Creates one consolidated invoice for the given company with all provided items.
     Called at event-end after items have been accumulated in MySQL.
@@ -230,19 +269,17 @@ def process_consumption_order(company_id: str, items: list[dict]) -> str:
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            client_id = get_client_by_company_id(company_id)
-            if client_id is None:
-                raise ValueError(f"company_id '{company_id}' not found in FossBilling")
-
+            client_id = _get_or_create_billing_client(company_id, company_name)
             invoice_id = _create_invoice(client_id, items)
-            print(f"[FOSSBILLING] Consolidated invoice created | invoice_id={invoice_id} | company_id={company_id}")
+            logging.info(
+                "[FOSSBILLING] Consolidated invoice created | invoice_id=%s | company_id=%s",
+                invoice_id, company_id,
+            )
             return invoice_id
 
-        except ValueError:
-            raise
         except Exception as e:
             last_error = e
-            print(f"[FOSSBILLING] Attempt {attempt}/{MAX_RETRIES} failed: {e}")
+            logging.warning("[FOSSBILLING] Attempt %d/%d failed: %s", attempt, MAX_RETRIES, e)
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY_SECONDS)
 
