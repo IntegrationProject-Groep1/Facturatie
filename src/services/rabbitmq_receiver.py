@@ -216,7 +216,7 @@ def process_message(
                 email=customer["email"],
             )
 
-            items, row_ids = consumption_store.get_items_by_correlation_id(correlation_id)
+            items, row_ids, company_id = consumption_store.get_items_by_correlation_id(correlation_id)
             if not items:
                 logging.warning(
                     "[RECEIVER] invoice_request: no items found for correlation_id=%s — ack without invoice",
@@ -225,7 +225,6 @@ def process_message(
                 channel.basic_ack(delivery_tag=method.delivery_tag)
                 return
 
-            company_id = company_name
             invoice_id = fossbilling_client.process_consumption_order(
                 company_id, items, company_name=company_name
             )

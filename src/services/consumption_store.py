@@ -156,8 +156,8 @@ def get_company_meta(company_id: str) -> dict:
     }
 
 
-def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[int]]:
-    """Returns (items, row_ids) for a specific consumption_order matched by its message_id."""
+def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[int], str]:
+    """Returns (items, row_ids, company_id) for a specific consumption_order matched by its message_id."""
     conn = _get_connection()
     try:
         with conn.cursor(dictionary=True) as cursor:
@@ -179,7 +179,8 @@ def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[i
         for row in rows
     ]
     row_ids = [row["id"] for row in rows]
-    return items, row_ids
+    company_id = rows[0]["company_id"] if rows else ""
+    return items, row_ids, company_id
 
 
 def update_meta_by_correlation_id(
