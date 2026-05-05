@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 import os
+import logging
 from src.services.rabbitmq_utils import get_connection
 
 # Load environment variables from the .env file
@@ -47,6 +48,14 @@ def build_consumption_order_xml(
     if is_company_linked:
         ET.SubElement(customer, "company_id").text = company_id
         ET.SubElement(customer, "company_name").text = company_name
+
+    ET.SubElement(customer, "email").text = ""
+    addr = ET.SubElement(customer, "address")
+    for field in ["street", "number", "postal_code", "city"]:
+        ET.SubElement(addr, field).text = ""
+    ET.SubElement(addr, "country").text = "be"
+
+    ET.SubElement(body, "payment_method").text = "company_link"
 
     # Build body — items
     items_el = ET.SubElement(body, "items")
@@ -107,36 +116,42 @@ def send_message(
         connection.close()
 
 
-def build_invoice_request_xml(
+def build_invoice_created_notification_xml(
     invoice_id: str,
-    client_email: str,
-    correlation_id: str,
-    company_name: str = "",
+    recipient_email: str,
+    master_uuid: str,
+    subject: str = "Uw nieuwe factuur",
+    message_text: str = "Beste klant, uw factuur staat klaar.",
     source: str = "facturatie",
 ) -> str:
     """
-    Builds an invoice XML message to be sent to the Mailing team.
-    correlation_id must reference the message_id of the original new_registration message.
-    company_name is optional — only include when the client is a company.
+    Builds an invoice_created_notification XML message to be sent to the Mailing team.
     """
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    billing_web_base = os.getenv("BILLING_WEB_URL")
+    if not billing_web_base:
+        logging.error("BILLING_WEB_URL is not set! PDF links will be broken.")
+        billing_web_base = "https://portal.yourdomain.com"
+
+    pdf_url = f"{billing_web_base.rstrip('/')}/invoice/{invoice_id}"
 
     root = ET.Element("message")
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "invoice"
+    ET.SubElement(header, "version").text = "1.0"
+    ET.SubElement(header, "type").text = "invoice_created_notification"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
-    ET.SubElement(header, "correlation_id").text = correlation_id
+    ET.SubElement(header, "master_uuid").text = master_uuid
 
     body = ET.SubElement(root, "body")
+    ET.SubElement(body, "recipient_email").text = recipient_email
     ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "client_email").text = client_email
-    if company_name:
-        ET.SubElement(body, "company_name").text = company_name
+    ET.SubElement(body, "subject").text = subject
+    ET.SubElement(body, "message_text").text = message_text
+    ET.SubElement(body, "pdf_url").text = pdf_url
 
     ET.indent(root, space="    ")
     return f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
@@ -188,6 +203,73 @@ def build_payment_confirmed_xml(
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         + ET.tostring(root, encoding="unicode")
+    )
+
+
+CRM_QUEUE = os.getenv("QUEUE_CRM", "facturatie.to.crm")
+
+
+def build_invoice_cancelled_xml(
+    invoice_id: str,
+    master_uuid: str,
+    correlation_id: str,
+    reason: str | None = None,
+) -> str:
+    """Builds an invoice_cancelled XML message to notify the CRM system."""
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "master_uuid").text = master_uuid
+    ET.SubElement(header, "version").text = "2.0"
+    ET.SubElement(header, "type").text = "invoice_cancelled"
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = "facturatie_system"
+    ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "invoice_number").text = invoice_id
+    if reason:
+        ET.SubElement(body, "reason").text = reason
+
+    ET.indent(root, space="    ")
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
+
+
+def publish_invoice_cancelled(
+    invoice_id: str,
+    master_uuid: str,
+    correlation_id: str,
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """Publishes an invoice_cancelled notification to the CRM queue."""
+    xml_message = build_invoice_cancelled_xml(invoice_id, master_uuid, correlation_id)
+    send_message(xml_message, routing_key=CRM_QUEUE, channel=channel)
+    logging.info(
+        "[SENDER] invoice_cancelled sent to '%s' | invoice_id=%s",
+        CRM_QUEUE, invoice_id,
+    )
+
+
+def publish_cancellation_failed(
+    invoice_id: str,
+    master_uuid: str,
+    correlation_id: str,
+    reason: str,
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """Publishes a failed invoice_cancelled message to CRM when a cancellation is blocked."""
+    xml_message = build_invoice_cancelled_xml(invoice_id, master_uuid, correlation_id, reason)
+    send_message(xml_message, routing_key=CRM_QUEUE, channel=channel)
+    logging.info(
+        "[SENDER] cancellation_failed sent to '%s' | invoice_id=%s | reason=%s",
+        CRM_QUEUE, invoice_id, reason,
     )
 
 

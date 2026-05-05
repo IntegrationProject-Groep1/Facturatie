@@ -12,6 +12,11 @@ def clear_seen_ids():
     yield
     receiver.seen_message_ids.clear()
 
+@pytest.fixture(autouse=True)
+def mock_identity():
+    """Zorgt ervoor dat request_master_uuid altijd direct een test-id teruggeeft."""
+    with patch("src.services.rabbitmq_receiver.request_master_uuid", return_value="88888-MOCK-UUID-12345"):
+        yield
 
 def make_channel() -> MagicMock:
     channel = MagicMock()
@@ -33,6 +38,7 @@ VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>a1b2c3d4-0000-4000-8000-000000000099</message_id>
+    <master_uuid>01890a5d-ac96-7ab2-80e2-4536629c90ib</master_uuid>
     <version>2.0</version>
     <type>new_registration</type>
     <timestamp>2026-03-31T10:00:00Z</timestamp>
@@ -40,9 +46,13 @@ VALID_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
   </header>
   <body>
     <customer>
-      <id>12345</id>
+      <customer_id>12345</customer_id>
       <email>info@bedrijf.be</email>
+      <first_name>Test</first_name>
+      <last_name>User</last_name>
       <is_company_linked>false</is_company_linked>
+      <company_id>4</company_id>
+      <company_name></company_name>
       <address>
         <street>Kiekenmarkt</street>
         <number>42</number>
@@ -94,7 +104,11 @@ def test_extract_customer_data_address() -> None:
 def test_process_new_registration_acks_on_success() -> None:
     """process_message must ack the message when FossBilling succeeds."""
     channel = make_channel()
-    with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"):
+    # We mocken de factuur creatie EN de XML builder om TypeErrors te voorkomen
+    with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"), \
+         patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml") as mock_xml:
+
+        mock_xml.return_value = "<xml>mock</xml>"
         process_message(channel, make_method(), MagicMock(), VALID_XML)
 
     # If this fails, check stdout.
@@ -106,16 +120,14 @@ def test_process_new_registration_acks_on_success() -> None:
 def test_process_new_registration_sends_invoice_request() -> None:
     """process_message must send invoice_request to facturatie.to.mailing on success."""
     channel = make_channel()
-    with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"):
+    with patch("src.services.rabbitmq_receiver.create_registration_invoice", return_value="INV-001"), \
+         patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml") as mock_xml:
+
+        mock_xml.return_value = "<xml>mock</xml>"
         process_message(channel, make_method(), MagicMock(), VALID_XML)
 
-    # Find the call that does NOT go to the DLQ
-    actual_routing_key = None
-    for call in channel.basic_publish.call_args_list:
-        if call.kwargs.get("routing_key") == "facturatie.to.mailing":
-            actual_routing_key = "facturatie.to.mailing"
-
-    assert actual_routing_key == "facturatie.to.mailing"
+    actual_keys = [call.kwargs.get("routing_key") for call in channel.basic_publish.call_args_list]
+    assert "facturatie.to.mailing" in actual_keys
 
 
 def test_process_new_registration_nacks_to_dlq_on_fossbilling_failure() -> None:

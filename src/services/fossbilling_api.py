@@ -1,12 +1,21 @@
+import logging
 import os
+import re
 import time
 import uuid
 import requests
 from dotenv import load_dotenv
+from .consumption_store import get_company_client_id, save_company_client_id
 
 load_dotenv()
 
 MAX_RETRIES = 3
+
+
+class FossBillingNotFoundError(Exception):
+    """Raised when FossBilling confirms the requested resource does not exist."""
+
+
 RETRY_DELAY_SECONDS = 2
 
 
@@ -14,11 +23,13 @@ def _api_post(endpoint: str, data: dict) -> dict:
     """Makes an authenticated POST request to the FossBilling admin API."""
     url = f"{os.getenv('BILLING_API_URL', 'http://localhost/api')}/{endpoint}"
     auth = (os.getenv("BILLING_API_USERNAME", "admin"), os.getenv("BILLING_API_TOKEN", ""))
-    response = requests.post(url, data=data, auth=auth, timeout=10, verify=False)
+    response = requests.post(url, data=data, auth=auth, timeout=10)
     response.raise_for_status()
     result = response.json()
     if not result.get("result"):
         error_msg = result.get("error", {}).get("message", "unknown error")
+        if "not found" in error_msg.lower():
+            raise FossBillingNotFoundError(error_msg)
         raise Exception(f"FossBilling API error on '{endpoint}': {error_msg}")
     return result
 
@@ -156,6 +167,123 @@ def pay_invoice(invoice_id: str, amount: str) -> bool:
     except Exception as e:
         print(f"[FOSSBILLING] ERROR: Failed to update invoice '{invoice_id}': {e}")
         return False
+
+
+def get_invoice_status(invoice_id: str) -> str | None:
+    """Returns the status of an invoice from FossBilling (e.g. 'paid', 'unpaid', 'cancelled').
+    Returns None if the invoice is definitively not found.
+    Raises Exception for transient errors (network issues, API unreachable).
+    """
+    try:
+        result = _api_post("admin/invoice/get", {"id": invoice_id})
+        return result.get("result", {}).get("status")
+    except FossBillingNotFoundError:
+        logging.info("[FOSSBILLING] Invoice '%s' not found in FossBilling", invoice_id)
+        return None
+    except Exception as e:
+        logging.error(
+            "[FOSSBILLING] ERROR: Could not fetch status for invoice '%s': %s: %s",
+            invoice_id, type(e).__name__, e
+        )
+        raise
+
+
+def get_client_by_company_id(company_id: str) -> int | None:
+    """Looks up a client by company_id in FossBilling. Returns client_id or None if not found."""
+    result = _api_post("admin/client/get_list", {"search": company_id, "per_page": 100})
+    clients = result.get("result", {}).get("list", [])
+    for client in clients:
+        if client.get("company") == company_id or str(client.get("id")) == company_id:
+            return int(client["id"])
+    return None
+
+
+def get_unpaid_invoice_for_client(client_id: int) -> str | None:
+    """Returns the invoice_id of the first unpaid invoice for the given client, or None."""
+    result = _api_post("admin/invoice/get_list", {"client_id": client_id, "status": "unpaid", "per_page": 1})
+    invoices = result.get("result", {}).get("list", [])
+    for invoice in invoices:
+        if invoice.get("status") == "unpaid":
+            return str(invoice["id"])
+    return None
+
+
+def add_item_to_invoice(invoice_id: str, item: dict) -> None:
+    """Adds a single item to an existing invoice in FossBilling."""
+    payload = {
+        "id": invoice_id,
+        "title": item["title"],
+        "price": item["price"],
+        "quantity": item.get("quantity", 1),
+    }
+    if item.get("vat_rate"):
+        payload["taxrate"] = item["vat_rate"]
+    _api_post("admin/invoice/item_add", payload)
+
+
+def _billing_email(company_id: str) -> str:
+    safe = re.sub(r"[^a-z0-9]", "_", company_id.lower())
+    return f"billing.{safe}@facturatie.be"
+
+
+def _get_or_create_billing_client(company_id: str, company_name: str) -> int:
+    """Returns the FossBilling client_id for the company billing account, creating it if needed."""
+    client_id = get_company_client_id(company_id)
+    if client_id is not None:
+        return client_id
+
+    email = _billing_email(company_id)
+    existing_id = _get_client_by_email(email)
+    if existing_id is not None:
+        save_company_client_id(company_id, existing_id)
+        return existing_id
+
+    payload = {
+        "email": email,
+        "first_name": company_name or company_id,
+        "last_name": "-",
+        "password": f"Billing-{uuid.uuid4()}",
+        "password_confirm": "",
+        "company": company_name or company_id,
+        "currency": "EUR",
+        "country": "BE",
+    }
+    result = _api_post("admin/client/create", payload)
+    new_id = int(result["result"])
+    save_company_client_id(company_id, new_id)
+    logging.info(
+        "[FOSSBILLING] Company billing account created | company_id=%s | client_id=%s",
+        company_id, new_id,
+    )
+    return new_id
+
+
+def process_consumption_order(company_id: str, items: list[dict], company_name: str = "") -> str:
+    """
+    Creates one consolidated invoice for the given company with all provided items.
+    Called at event-end after items have been accumulated in MySQL.
+    Returns the invoice_id.
+    Raises ValueError immediately if company_id is not found.
+    Raises Exception after MAX_RETRIES on transient API failures.
+    """
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            client_id = _get_or_create_billing_client(company_id, company_name)
+            invoice_id = _create_invoice(client_id, items)
+            logging.info(
+                "[FOSSBILLING] Consolidated invoice created | invoice_id=%s | company_id=%s",
+                invoice_id, company_id,
+            )
+            return invoice_id
+
+        except Exception as e:
+            last_error = e
+            logging.warning("[FOSSBILLING] Attempt %d/%d failed: %s", attempt, MAX_RETRIES, e)
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SECONDS)
+
+    raise Exception(f"FossBilling consumption order failed after {MAX_RETRIES} attempts: {last_error}")
 
 
 def cancel_invoice(invoice_id: str) -> bool:

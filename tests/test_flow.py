@@ -18,13 +18,13 @@ def get_auth_method():
 
     methods = [
         ("Basic Auth (email + token)",
-         lambda: requests.post(url, auth=(username, token), data={}, timeout=10, verify=False)),
+         lambda: requests.post(url, auth=(username, token), data={}, timeout=10)),
         ("Bearer token",
-         lambda: requests.post(url, headers={"Authorization": f"Bearer {token}"}, data={}, timeout=10, verify=False)),
+         lambda: requests.post(url, headers={"Authorization": f"Bearer {token}"}, data={}, timeout=10)),
         ("access_token in body",
-         lambda: requests.post(url, data={"access_token": token}, timeout=10, verify=False)),
+         lambda: requests.post(url, data={"access_token": token}, timeout=10)),
         ("access_token in URL",
-         lambda: requests.post(f"{url}?access_token={token}", data={}, timeout=10, verify=False)),
+         lambda: requests.post(f"{url}?access_token={token}", data={}, timeout=10)),
     ]
 
     for name, method in methods:
@@ -65,8 +65,7 @@ def test_client_create():
             "last_name": "User",
             "currency": "EUR",
         },
-        timeout=10,
-        verify=False
+        timeout=10
     )
     assert r2.status_code == 200, f"Got {r2.status_code}: {r2.text[:300]}"
 

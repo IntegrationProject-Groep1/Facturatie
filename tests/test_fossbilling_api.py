@@ -138,11 +138,12 @@ def test_create_invoice_returns_invoice_id() -> None:
 
 def test_create_invoice_raises_on_api_error() -> None:
     """_create_invoice must raise an Exception when the API returns no result."""
+    from src.services.fossbilling_api import FossBillingNotFoundError
     mock = MagicMock()
     mock.json.return_value = {"error": {"message": "client not found"}}
     mock.raise_for_status = MagicMock()
     with patch("src.services.fossbilling_api.requests.post", return_value=mock):
-        with pytest.raises(Exception, match="FossBilling API error"):
+        with pytest.raises(FossBillingNotFoundError):
             _create_invoice(42, INVOICE_ITEMS)
 
 
@@ -249,11 +250,12 @@ def test_update_client_includes_company_when_linked() -> None:
 
 def test_update_client_raises_on_api_error() -> None:
     """update_client must raise an Exception when the API returns no result."""
+    from src.services.fossbilling_api import FossBillingNotFoundError
     mock = MagicMock()
     mock.json.return_value = {"error": {"message": "client not found"}}
     mock.raise_for_status = MagicMock()
     with patch("src.services.fossbilling_api.requests.post", return_value=mock):
-        with pytest.raises(Exception, match="FossBilling API error"):
+        with pytest.raises(FossBillingNotFoundError):
             update_client(99, CUSTOMER_DATA)
 
 

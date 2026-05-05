@@ -15,7 +15,7 @@ Authentication via HTTP Basic Auth. Set the following environment variables:
 | `BILLING_API_USERNAME` | Admin username | `admin` |
 | `BILLING_API_TOKEN` | API token (generate via FossBilling admin panel) | `D8tW...` |
 
-> **Note:** `verify=False` is set to allow self-signed certificates on the shared server.
+> **Note:** SSL certificate verification is enabled. The API URL must use a valid certificate (e.g. via the Cloudflare tunnel at `https://facturatie.desiderius.me/api`).
 
 ---
 

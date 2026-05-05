@@ -88,18 +88,13 @@ def process_dlq_message(
 
 
 def start_dlq_consumer(queue: str | None = None) -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-
     if queue is None:
         queue = os.getenv("QUEUE_DLQ", "facturatie.dlq")
 
     connection = get_connection()
     channel = connection.channel()
 
-    channel.queue_declare(queue=queue, durable=True)
+    channel.queue_declare(queue=queue, passive=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=process_dlq_message)
 

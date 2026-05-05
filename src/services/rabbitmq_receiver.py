@@ -1,22 +1,32 @@
+import logging
 import pika
 import pika.channel
 import pika.spec
 from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
+from defusedxml.ElementTree import fromstring as defused_fromstring
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
-from .rabbitmq_sender import build_invoice_request_xml, build_payment_confirmed_xml, send_message
+from .rabbitmq_sender import (
+    build_invoice_created_notification_xml,
+    build_payment_confirmed_xml,
+    publish_cancellation_failed,
+    publish_invoice_cancelled,
+    send_message,
+)
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq
 )
-from src.services import fossbilling_api as fossbilling_client, crm_publisher
+from src.services import fossbilling_api as fossbilling_client
+from src.services.identity_client import request_master_uuid
+from src.services import consumption_store
 
 # Valid values per XML Naming Standard (all lowercase snake_case)
 VALID_TYPES: set[str] = {
-    "consumption_order", "payment_registered",
-    "heartbeat", "new_registration", "invoice_request", "invoice_cancelled"
+    "payment_registered", "heartbeat", "new_registration",
+    "invoice_request", "invoice_cancelled", "event_ended"
 }
 VALID_VAT_RATES: set[str] = {"6", "12", "21"}
 VALID_PAYMENT_METHODS: set[str] = {"company_link", "on_site", "online"}
@@ -93,7 +103,7 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
 def process_message(
     channel: pika.channel.Channel,
     method: pika.spec.Basic.Deliver,
-    properties: pika.spec.BasicProperties,
+    _properties: pika.spec.BasicProperties,
     body: bytes
 ) -> None:
     print("\n[RECEIVER] Message received")
@@ -101,7 +111,7 @@ def process_message(
     # Step 1: parse XML — catch both invalid XML and bad encodings
     try:
         xml_str = body.decode("utf-8")
-        root = ET.fromstring(xml_str)
+        root = defused_fromstring(xml_str)
     except (ET.ParseError, UnicodeDecodeError) as e:
         print(f"[RECEIVER] ERROR: Invalid XML or encoding — {e}")
         send_to_dlq(channel, body, [f"ERROR: invalid_xml: {e}"])
@@ -137,6 +147,17 @@ def process_message(
     # Process new customer registration
     if msg_type == "new_registration":
         customer_data = extract_customer_data(root)
+
+        # Request master UUID from identity-service
+        try:
+            master_uuid = request_master_uuid(customer_data["email"])
+            print(f"[RECEIVER] master_uuid received | email={customer_data['email']} | master_uuid={master_uuid}")
+        except Exception as e:
+            print(f"[RECEIVER] ERROR: master_uuid request failed — {e}")
+            send_to_dlq(channel, body, [f"ERROR: identity_service_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
         try:
             # Create registration invoice in FossBilling
             invoice_id = create_registration_invoice(customer_data)
@@ -147,55 +168,122 @@ def process_message(
             return
 
         # Build and send XML for the Mailing Service
-        invoice_request_xml = build_invoice_request_xml(
+        notification_xml = build_invoice_created_notification_xml(
             invoice_id=invoice_id,
-            client_email=customer_data["email"],
+            recipient_email=customer_data["email"],
             correlation_id=msg_id,
             company_name=customer_data.get("company_name", ""),
+            master_uuid=master_uuid,
         )
 
         send_message(
-            invoice_request_xml,
+            notification_xml,
             routing_key="facturatie.to.mailing",
             channel=channel
         )
 
         print(
-            f"[RECEIVER] invoice_request sent | invoice_id={invoice_id}"
+            f"[RECEIVER] invoice_created_notification sent | invoice_id={invoice_id}"
             f" | correlation_id={msg_id}"
         )
 
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
     elif msg_type == "invoice_request":
-        data = extract_invoice_request_data(root)
-        try:
-            # FIX: We map data from the ‘items’ list to the fields
-            # that create_registration_invoice expects.
-            customer_payload = data["customer"]
-            if data["items"]:
-                # Set the price of the first item as 'registration_fee'
-                customer_payload["registration_fee"] = data["items"][0]["price"]
-                customer_payload["fee_currency"] = data["items"][0]["currency"]
+        is_company_linked = root.findtext("body/customer/is_company_linked") == "true"
+        company_id = root.findtext("body/customer/company_id")
+        badge_id = root.findtext("body/customer/customer_id") or ""
+        master_uuid = root.findtext("header/master_uuid") or badge_id
+        email = root.findtext("body/customer/email") or ""
+        company_name = root.findtext("body/customer/company_name") or ""
 
-            # Only call this now: the retry logic and the data structure are now working
-            invoice_id = create_registration_invoice(customer_payload)
-
-        except Exception as e:
-            print(f"[RECEIVER] ERROR: fossbilling_failed: {e}")
-            send_to_dlq(channel, body, [f"ERROR: fossbilling_failed: {e}"])
+        if not is_company_linked or not company_id:
+            send_to_dlq(channel, body, ["ERROR: invoice_request requires is_company=true and company_id"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        invoice_xml = build_invoice_request_xml(
-            invoice_id=invoice_id,
-            client_email=data["customer"]["email"],
-            correlation_id=msg_id,
-            company_name=data["customer"].get("company_name", ""),
-        )
-        send_message(invoice_xml, routing_key="facturatie.to.mailing", channel=channel)
-        print(f"[RECEIVER] invoice sent | invoice_id={invoice_id} | correlation_id={msg_id}")
-        channel.basic_ack(delivery_tag=method.delivery_tag)
+        items = []
+        for item_el in root.findall("body/items/item"):
+            description = item_el.findtext("description") or ""
+            unit_price_el = item_el.find("unit_price")
+            items.append({
+                "description": description,
+                "price": unit_price_el.text if unit_price_el is not None else "0",
+                "quantity": int(item_el.findtext("quantity") or 1),
+                "vat_rate": item_el.findtext("vat_rate") or "",
+            })
+
+        try:
+            consumption_store.save_items(company_id, badge_id, master_uuid, items, email, company_name)
+            logging.info(
+                "[RECEIVER] invoice_request saved | company_id=%s | badge_id=%s | items=%d",
+                company_id, badge_id, len(items),
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+        except Exception as e:
+            logging.error("[RECEIVER] ERROR: invoice_request_save_failed: %s", e)
+            send_to_dlq(channel, body, [f"ERROR: invoice_request_save_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+    elif msg_type == "event_ended":
+        session_id = root.findtext("body/session_id") or ""
+        logging.info("[RECEIVER] event_ended | session_id=%s", session_id)
+
+        try:
+            company_ids = consumption_store.get_pending_company_ids()
+            if not company_ids:
+                logging.info("[RECEIVER] event_ended: no pending consumptions")
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+                return
+
+            errors = []
+            for company_id in company_ids:
+                try:
+                    items, row_ids = consumption_store.get_items_for_company(company_id)
+                    if not items:
+                        continue
+                    meta = consumption_store.get_company_meta(company_id)
+                    invoice_id = fossbilling_client.process_consumption_order(
+                        company_id, items, company_name=meta["company_name"]
+                    )
+
+                    consumption_store.clear_by_ids(row_ids)
+
+                    try:
+                        billing_url = os.getenv('BILLING_WEB_URL', 'https://portal.yourdomain.com').rstrip('/')
+                        pdf_url = f"{billing_url}/invoice/{invoice_id}"
+
+                        notification_xml = build_invoice_created_notification_xml(
+                            invoice_id=invoice_id,
+                            recipient_email=meta["email"],
+                            master_uuid=master_uuid,
+                            subject=f"Uw factuur {invoice_id} staat klaar",
+                            message_text="Bedankt voor uw gebruik van onze diensten. In de bijlage vindt u de details.",
+                            pdf_url=pdf_url
+                        )
+                        send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
+                    except Exception as mail_err:
+                        # We loggen de mail fout, maar gaan door (de factuur is immers al klaar)
+                        logging.warning("[RECEIVER] Invoice created but mail failed for %s: %s", company_id, mail_err)
+
+                    logging.info(
+                        "[RECEIVER] event_ended: invoice processed | company_id=%s | invoice_id=%s",
+                        company_id, invoice_id,
+                    )
+                except Exception as e:
+                    logging.error("[RECEIVER] event_ended: failed for company_id=%s: %s", company_id, e)
+                    errors.append(f"company_id={company_id}: {e}")
+
+            if errors:
+                send_to_dlq(channel, body, [f"ERROR: event_ended partial failure: {'; '.join(errors)}"])
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            else:
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+
+        except Exception as e:
+            logging.error("[RECEIVER] ERROR: event_ended_failed: %s", e)
+            send_to_dlq(channel, body, [f"ERROR: event_ended_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     elif msg_type == "payment_registered":
         print("[RECEIVER] Handling payment_registered")
@@ -206,7 +294,7 @@ def process_message(
             if invoice_el is None:
                 raise ValueError("Missing <invoice> element")
 
-            invoice_id = invoice_el.findtext("id")
+            invoice_id = invoice_el.findtext("invoice_number") or invoice_el.findtext("id")
             due_date = invoice_el.findtext("due_date") or ""
             if not invoice_id:
                 raise ValueError("Missing invoice id in <invoice><id>")
@@ -272,10 +360,60 @@ def process_message(
             return
 
         invoice_id = root.findtext("body/invoice/id")
-        customer_id = root.findtext("body/customer/id")
         correlation_id = root.findtext("header/correlation_id")
+        master_uuid = root.findtext("header/master_uuid") or "unknown"
+
+        if not invoice_id:
+            send_to_dlq(channel, body, ["ERROR: missing invoice_id in invoice_cancelled message"])
+            publish_cancellation_failed(
+                invoice_id="unknown",
+                master_uuid=master_uuid,
+                correlation_id=correlation_id,
+                reason="missing_invoice_id",
+                channel=channel,
+            )
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
 
         print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
+
+        # Step: check invoice status before cancelling
+        try:
+            status = fossbilling_client.get_invoice_status(invoice_id)
+        except Exception as e:
+            error_msg = f"ERROR: FossBilling unreachable during status check: {e}"
+            logging.error("[RECEIVER][%s] %s", msg_type, error_msg)
+            send_to_dlq(channel, body, [error_msg])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        if status is None:
+            logging.warning(
+                "[RECEIVER][%s] Invoice '%s' not found in FossBilling", msg_type, invoice_id
+            )
+            publish_cancellation_failed(
+                invoice_id,
+                master_uuid=master_uuid,
+                correlation_id=correlation_id,
+                reason="invoice_not_found",
+                channel=channel,
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        if status in ("paid", "cancelled"):
+            reason = "invoice_already_paid" if status == "paid" else "invoice_already_cancelled"
+            logging.warning(
+                "[RECEIVER][%s] Cancellation blocked — invoice '%s' has status '%s'",
+                msg_type, invoice_id, status
+            )
+            publish_cancellation_failed(
+                invoice_id, master_uuid=master_uuid, correlation_id=correlation_id,
+                reason=reason,
+                channel=channel,
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
 
         success = fossbilling_client.cancel_invoice(invoice_id)
         if not success:
@@ -284,8 +422,8 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        crm_publisher.publish_invoice_cancelled(invoice_id, customer_id, correlation_id)
-        print(f"[RECEIVER][{msg_type}] Flow complete for invoice '{invoice_id}'")
+        publish_invoice_cancelled(invoice_id, master_uuid, correlation_id, channel=channel)
+        logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
     else:
@@ -301,7 +439,7 @@ def start_receiver(queue: str | None = None) -> None:
     connection = get_connection()
     channel = connection.channel()
 
-    channel.queue_declare(queue=queue, durable=True)
+    channel.queue_declare(queue=queue, passive=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=process_message)
 
