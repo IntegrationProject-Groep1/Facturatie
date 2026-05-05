@@ -23,22 +23,24 @@ def parse(xml_str: str) -> ET.Element:
     return ET.fromstring(xml_str.split("\n", 1)[1])
 
 
-# ── invoice_created_notification ──────────────────────────────────────────────
+# ── build_invoice_created_notification_xml (send_mailing) ────────────────────
 
 @pytest.fixture
 def notification_xml(monkeypatch):
-    """Bouwt een invoice_created_notification XML met gemockte BILLING_WEB_URL."""
     monkeypatch.setenv("BILLING_WEB_URL", "https://portal.yourdomain.com")
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
         return build_invoice_created_notification_xml(
             invoice_id=INVOICE_ID,
             recipient_email=RECIPIENT_EMAIL,
             correlation_id=CORRELATION_ID,
+            first_name="Jan",
+            last_name="Peeters",
+            customer_id=CUSTOMER_ID,
         )
 
 
 def test_notification_type(notification_xml) -> None:
-    assert parse(notification_xml).findtext("header/type") == "invoice_created_notification"
+    assert parse(notification_xml).findtext("header/type") == "send_mailing"
 
 
 def test_notification_version(notification_xml) -> None:
@@ -58,30 +60,37 @@ def test_notification_message_id_is_uuid(notification_xml) -> None:
 
 
 def test_notification_correlation_id_in_header(notification_xml) -> None:
-    """correlation_id vervangt master_uuid als koppelingssleutel (contract #90)."""
     assert parse(notification_xml).findtext("header/correlation_id") == CORRELATION_ID
 
 
 def test_notification_no_master_uuid_in_header(notification_xml) -> None:
-    """master_uuid mag nooit in de header zitten (contract #90)."""
     assert parse(notification_xml).findtext("header/master_uuid") is None
 
 
 def test_notification_recipient_email(notification_xml) -> None:
-    assert parse(notification_xml).findtext("body/recipient_email") == RECIPIENT_EMAIL
+    root = parse(notification_xml)
+    assert root.findtext("body/recipients/recipient/email") == RECIPIENT_EMAIL
 
 
 def test_notification_invoice_id(notification_xml) -> None:
-    assert parse(notification_xml).findtext("body/invoice_id") == INVOICE_ID
+    import json
+    root = parse(notification_xml)
+    template_data = json.loads(root.findtext("body/template_data"))
+    assert template_data["invoice_id"] == INVOICE_ID
 
 
 def test_notification_pdf_url_format(notification_xml) -> None:
-    pdf_url = parse(notification_xml).findtext("body/pdf_url")
-    assert pdf_url == f"https://portal.yourdomain.com/invoice/{INVOICE_ID}"
+    import json
+    root = parse(notification_xml)
+    template_data = json.loads(root.findtext("body/template_data"))
+    assert template_data["pdf_url"] == f"https://portal.yourdomain.com/invoice/{INVOICE_ID}"
+
+
+def test_notification_mail_type(notification_xml) -> None:
+    assert parse(notification_xml).findtext("body/mail_type") == "invoice_ready"
 
 
 def test_notification_xsd_validation_error_raises() -> None:
-    """Als XSD-validatie faalt moet de builder een ValueError gooien."""
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(False, "missing field")):
         with pytest.raises(ValueError, match="XSD validation failed"):
             build_invoice_created_notification_xml(
@@ -95,15 +104,13 @@ def test_notification_xsd_validation_error_raises() -> None:
 
 @pytest.fixture
 def payment_xml():
-    """Bouwt een payment_registered (outgoing) XML met gemockte XSD-validatie."""
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
         return build_payment_confirmed_xml(
             invoice_id=INVOICE_ID,
             customer_id=CUSTOMER_ID,
             amount="150.00",
             currency="eur",
-            payment_method="on_site",
-            correlation_id=CORRELATION_ID,
+            payment_method="cash",
             paid_at="2026-05-01T10:00:00Z",
         )
 
@@ -120,8 +127,9 @@ def test_payment_source(payment_xml) -> None:
     assert parse(payment_xml).findtext("header/source") == "facturatie"
 
 
-def test_payment_correlation_id(payment_xml) -> None:
-    assert parse(payment_xml).findtext("header/correlation_id") == CORRELATION_ID
+def test_payment_no_correlation_id(payment_xml) -> None:
+    """Outgoing payment_registered heeft geen correlation_id (contract §8.2)."""
+    assert parse(payment_xml).findtext("header/correlation_id") is None
 
 
 def test_payment_no_master_uuid(payment_xml) -> None:
@@ -129,7 +137,6 @@ def test_payment_no_master_uuid(payment_xml) -> None:
 
 
 def test_payment_invoice_id_in_body(payment_xml) -> None:
-    """Outgoing body heeft losse invoice_id — geen invoice/transaction blokken (contract §8.2)."""
     assert parse(payment_xml).findtext("body/invoice_id") == INVOICE_ID
 
 
@@ -145,19 +152,17 @@ def test_payment_amount_and_currency(payment_xml) -> None:
 
 
 def test_payment_method(payment_xml) -> None:
-    assert parse(payment_xml).findtext("body/payment_method") == "on_site"
+    assert parse(payment_xml).findtext("body/payment_method") == "cash"
 
 
 def test_payment_non_eur_currency_is_forced_to_eur() -> None:
-    """Niet-EUR valuta wordt geforceerd naar 'eur' met een warning (contract Regel 3)."""
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
         xml = build_payment_confirmed_xml(
             invoice_id=INVOICE_ID,
             customer_id=CUSTOMER_ID,
             amount="100.00",
             currency="USD",
-            payment_method="online",
-            correlation_id=CORRELATION_ID,
+            payment_method="card",
         )
     amount_el = parse(xml).find("body/amount_paid")
     assert amount_el.get("currency") == "eur"
@@ -171,6 +176,5 @@ def test_payment_xsd_validation_error_raises() -> None:
                 customer_id=CUSTOMER_ID,
                 amount="100.00",
                 currency="eur",
-                payment_method="online",
-                correlation_id=CORRELATION_ID,
+                payment_method="card",
             )
