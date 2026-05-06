@@ -263,6 +263,36 @@ def get_items_for_company(company_id: str) -> tuple[list[dict], list[int]]:
     return items, row_ids
 
 
+def get_master_uuid_by_correlation_id(correlation_id: str) -> str:
+    """Returns the master_uuid from the first pending row matching the given consumption_order_id."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT master_uuid FROM pending_consumptions WHERE consumption_order_id = %s LIMIT 1",
+                (correlation_id,),
+            )
+            row = cursor.fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else ""
+
+
+def get_master_uuid_by_company_id(company_id: str) -> str:
+    """Returns the master_uuid from the first pending row for the given company_id."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT master_uuid FROM pending_consumptions WHERE company_id = %s LIMIT 1",
+                (company_id,),
+            )
+            row = cursor.fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else ""
+
+
 def clear_by_ids(row_ids: list[int]) -> None:
     """Deletes only the specific processed rows by their database IDs."""
     if not row_ids:
