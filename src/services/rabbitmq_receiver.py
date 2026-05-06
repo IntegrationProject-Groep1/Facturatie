@@ -339,7 +339,7 @@ def process_message(
                     if not items:
                         continue
                     meta = consumption_store.get_company_meta(company_id)
-                    master_uuid = consumption_store.get_master_uuid_by_correlation_id(company_id)
+                    master_uuid = consumption_store.get_master_uuid_by_company_id(company_id)
                     invoice_id = fossbilling_client.process_consumption_order(
                         company_id, items, company_name=meta["company_name"]
                     )
