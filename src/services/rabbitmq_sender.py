@@ -12,6 +12,8 @@ from src.utils.xml_validator import validate_xml
 # Load environment variables from the .env file
 load_dotenv()
 
+BILLING_WEB_URL = os.getenv("BILLING_WEB_URL", "https://portal.yourdomain.com").rstrip("/")
+
 
 def build_consumption_order_xml(
     customer_id: str,
@@ -135,7 +137,7 @@ def build_invoice_created_notification_xml(
 
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    billing_web_base = os.getenv("BILLING_WEB_URL", "https://portal.yourdomain.com").rstrip("/")
+    billing_web_base = BILLING_WEB_URL
     pdf_url = f"{billing_web_base}/invoice/{invoice_id}"
 
     root = ET.Element("message")
@@ -243,6 +245,62 @@ def build_payment_confirmed_xml(
 
 
 CRM_QUEUE = os.getenv("QUEUE_CRM", "facturatie.to.crm")
+FRONTEND_QUEUE = os.getenv("QUEUE_FRONTEND", "facturatie.to.frontend")
+
+
+def build_invoice_link_xml(
+    invoice_id: str,
+    master_uuid: str,
+    source: str = "facturatie",
+) -> str:
+    """
+    Builds an invoice_available XML message to be sent to the Frontend team.
+    Queue: facturatie.to.frontend
+    """
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    billing_web_base = os.getenv("BILLING_WEB_URL", "https://portal.yourdomain.com").rstrip("/")
+    pdf_url = f"{billing_web_base}/invoice/{invoice_id}"
+
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "version").text = "2.0"
+    ET.SubElement(header, "type").text = "invoice_available"
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "master_uuid").text = master_uuid
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "invoice_id").text = invoice_id
+    ET.SubElement(body, "pdf_url").text = pdf_url
+
+    ET.indent(root, space="    ")
+    xml_str = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
+
+    is_valid, error_msg = validate_xml(xml_str, "invoice_link")
+    if not is_valid:
+        raise ValueError(f"[SENDER] invoice_link XSD validation failed: {error_msg}")
+
+    return xml_str
+
+
+def publish_invoice_link(
+    invoice_id: str,
+    master_uuid: str,
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """Publishes an invoice_available notification to the Frontend queue."""
+    xml_message = build_invoice_link_xml(invoice_id, master_uuid)
+    send_message(xml_message, routing_key=FRONTEND_QUEUE, channel=channel)
+    logging.info(
+        "[SENDER] invoice_link sent to '%s' | invoice_id=%s | master_uuid=%s",
+        FRONTEND_QUEUE, invoice_id, master_uuid,
+    )
 
 
 def build_invoice_cancelled_xml(
@@ -323,6 +381,27 @@ def send_error_to_monitor(error_message: str) -> None:
         + ET.tostring(root, encoding="unicode")
     )
     send_message(xml_error, routing_key="errors.facturatie")
+
+
+def send_log(level: str, action: str, message: str, channel=None) -> None:
+    """Sends a log message to the monitoring logs queue."""
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<message>
+  <header>
+    <message_id>{uuid.uuid4()}</message_id>
+    <timestamp>{ts}</timestamp>
+    <source>facturatie</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>{level}</level>
+    <action>{action}</action>
+    <message>{message}</message>
+  </body>
+</message>"""
+    send_message(xml, routing_key="logs", channel=channel)
 
 
 if __name__ == "__main__":
