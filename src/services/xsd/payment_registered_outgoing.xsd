@@ -17,7 +17,7 @@
       <xs:element name="body">
         <xs:complexType><xs:sequence>
           <xs:element name="invoice_id"  type="xs:string"/>
-          <xs:element name="customer_id" type="xs:string"/>
+          <xs:element name="user_id" type="xs:string"/>
           <xs:element name="amount_paid">
             <xs:complexType><xs:simpleContent><xs:extension base="xs:decimal">
               <xs:attribute name="currency" use="required">
