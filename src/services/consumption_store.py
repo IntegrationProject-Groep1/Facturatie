@@ -171,7 +171,7 @@ def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[i
 
     items = [
         {
-            "title": f"{row['description']} (badge: {row['badge_id']})" if row['badge_id'] else row['description'],
+            "title": f"{row['description']} ({row['company_id']})" if row['company_id'] else row['description'],
             "price": str(row["price"]),
             "quantity": row["quantity"],
             "vat_rate": row["vat_rate"] or "",
@@ -252,7 +252,7 @@ def get_items_for_company(company_id: str) -> tuple[list[dict], list[int]]:
 
     items = [
         {
-            "title": f"{row['description']} (badge: {row['badge_id']})",
+            "title": f"{row['description']} ({row['company_id']})" if row['company_id'] else row['description'],
             "price": str(row["price"]),
             "quantity": row["quantity"],
             "vat_rate": row["vat_rate"] or "",
