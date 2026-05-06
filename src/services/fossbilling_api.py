@@ -6,6 +6,7 @@ import uuid
 import requests
 from dotenv import load_dotenv
 from .consumption_store import get_company_client_id, save_company_client_id
+import datetime as dt
 
 load_dotenv()
 
@@ -152,7 +153,6 @@ def pay_invoice(invoice_id: str, amount: str) -> bool:
     Marks an invoice as paid. paid_at is sent as a datetime string
     because FossBilling ignores Unix timestamps for this field.
     """
-    import datetime as dt
     paid_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     try:
         _api_post("admin/invoice/update", {
@@ -161,7 +161,7 @@ def pay_invoice(invoice_id: str, amount: str) -> bool:
             "paid_at": paid_at,
         })
 
-        print(f"[FOSSBILLING] Invoice '{invoice_id}' marked as PAID | paid_at={paid_at}")
+        logging.info("[FOSSBILLING] Invoice '%s' marked as PAID | paid_at=%s", invoice_id, paid_at)
         return True
 
     except Exception as e:
