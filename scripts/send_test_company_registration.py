@@ -119,5 +119,5 @@ if __name__ == "__main__":
 
     print("\n[OK] Bericht verzonden. Controleer:")
     print(f"  - FossBilling: klant aangemaakt met bedrijfsnaam '{COMPANY_NAME}'")
-    print("  - RabbitMQ crm.to.mailing: send_mailing bericht verwacht")
+    print("  - RabbitMQ facturatie.to.mailing: send_mailing bericht verwacht")
     print("  - Receiver logs: geen errors")
