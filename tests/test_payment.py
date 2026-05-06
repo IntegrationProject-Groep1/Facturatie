@@ -13,17 +13,18 @@ def mark_invoice_as_paid(invoice_id, amount="15.00"):
 
     root = ET.Element("message")
 
-    # 1. Header (Moet voldoen aan HeaderType [cite: 10, 11])
+    # 1. Header — volgorde per contract §6.6: message_id → type → source → timestamp → version
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "payment_registered" # Fixed in XSD
+    ET.SubElement(header, "type").text = "payment_registered"
+    ET.SubElement(header, "source").text = "kassa"
     ET.SubElement(header, "timestamp").text = timestamp
-    ET.SubElement(header, "source").text = "payment_provider"
+    ET.SubElement(header, "version").text = "2.0"
     ET.SubElement(header, "correlation_id").text = corr_id
 
     # 2. Body (Moet voldoen aan PaymentRegisteredBodyType [cite: 10])
     body = ET.SubElement(root, "body")
+    ET.SubElement(body, "payment_context").text = "consumption"
 
     # Invoice block [cite: 12]
     invoice = ET.SubElement(body, "invoice")
@@ -47,7 +48,7 @@ def mark_invoice_as_paid(invoice_id, amount="15.00"):
 
     print(f"[TEST] Sending payment for Invoice ID: {invoice_id}")
     print(f"[TEST] Message ID: {msg_id}")
-    send_message(xml_str, routing_key="crm.to.facturatie")
+    send_message(xml_str, routing_key="facturatie.incoming")
 
 if __name__ == "__main__":
     mark_invoice_as_paid(2)

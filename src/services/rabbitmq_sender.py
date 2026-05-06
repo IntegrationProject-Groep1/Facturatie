@@ -270,6 +270,7 @@ def build_invoice_link_xml(
     ET.SubElement(header, "type").text = "invoice_available"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "master_uuid").text = master_uuid
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "invoice_id").text = invoice_id
