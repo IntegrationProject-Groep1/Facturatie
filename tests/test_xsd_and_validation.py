@@ -63,51 +63,42 @@ def build_new_registration_xml(
     msg_id: str = "a1b2c3d4-0000-4000-8000-000000000001",
     version: str = "2.0",
     timestamp: str = "2026-03-30T10:00:00Z",
-    source: str = "frontend",
+    source: str = "crm",
     email: str | None = "info@bedrijf.be",
     is_company_linked: str = "false",
 ) -> str:
-    """
-    Bouwt een new_registration XML conform de nieuwe structuur.
-    Geen master_uuid in header, namen zitten in <contact> wrapper.
-    """
     root = ET.Element("message")
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
-    # master_uuid VERWIJDERD — verboden in alle headers (contract #90)
-    ET.SubElement(header, "version").text = version
-    ET.SubElement(header, "type").text = "new_registration"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "new_registration"
+    ET.SubElement(header, "version").text = version
 
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")
-    ET.SubElement(customer, "customer_id").text = "REG-999"
+    ET.SubElement(customer, "user_id").text = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"
 
     if email is not None:
         ET.SubElement(customer, "email").text = email
 
-    # Namen zitten in <contact> wrapper (contract Regel 2)
+    ET.SubElement(customer, "date_of_birth").text = "1995-03-21"
+
     contact = ET.SubElement(customer, "contact")
     ET.SubElement(contact, "first_name").text = "Test"
     ET.SubElement(contact, "last_name").text = "User"
 
-    ET.SubElement(customer, "is_company_linked").text = is_company_linked
+    ET.SubElement(customer, "type").text = "company"
+    ET.SubElement(customer, "company_name").text = "Test Bedrijf NV"
+    ET.SubElement(customer, "vat_number").text = "BE0123456789"
+    ET.SubElement(customer, "company_id").text = "comp-001"
+    ET.SubElement(customer, "session_id").text = "sess-001"
 
-    if is_company_linked == "true":
-        ET.SubElement(customer, "company_id").text = "CRM-COMP-888"
-        ET.SubElement(customer, "company_name").text = "Test Bedrijf NV"
-
-    address = ET.SubElement(customer, "address")
-    ET.SubElement(address, "street").text = "Kiekenmarkt"
-    ET.SubElement(address, "number").text = "42"
-    ET.SubElement(address, "postal_code").text = "1000"
-    ET.SubElement(address, "city").text = "Brussel"
-    ET.SubElement(address, "country").text = "be"
-
-    fee_el = ET.SubElement(body, "registration_fee", {"currency": "eur"})
-    fee_el.text = "150.00"
+    payment_due = ET.SubElement(customer, "payment_due")
+    amount_el = ET.SubElement(payment_due, "amount", {"currency": "eur"})
+    amount_el.text = "150.00"
+    ET.SubElement(payment_due, "status").text = "unpaid"
 
     return ET.tostring(root, encoding="unicode")
 
