@@ -443,7 +443,7 @@ class TestProcessMessageNewRegistration:
             process_message(channel, _make_method(), MagicMock(), _build_new_registration_xml())
 
         routing_keys = [c.kwargs.get("routing_key") for c in channel.basic_publish.call_args_list]
-        assert "crm.to.mailing" in routing_keys
+        assert "facturatie.to.mailing" in routing_keys
 
     def test_nacks_to_dlq_on_fossbilling_failure(self) -> None:
         channel = self._make_channel()

@@ -2,7 +2,6 @@ import logging
 import pika
 import pika.channel
 import pika.spec
-import time
 from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
@@ -20,7 +19,7 @@ from .rabbitmq_sender import (
 )
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
-    get_connection, get_connection_with_retry, send_to_dlq
+    get_connection_with_retry, send_to_dlq
 )
 from src.services.rabbitmq_sender import send_log
 from src.services import fossbilling_api as fossbilling_client
