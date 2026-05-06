@@ -248,6 +248,79 @@ CRM_QUEUE = os.getenv("QUEUE_CRM", "facturatie.to.crm")
 FRONTEND_QUEUE = os.getenv("QUEUE_FRONTEND", "facturatie.to.frontend")
 
 
+def build_invoice_status_xml(
+    invoice_id: str,
+    user_id: str,
+    status: str,
+    amount: str,
+    currency: str = "eur",
+    due_date: str | None = None,
+    source: str = "facturatie",
+) -> str:
+    """
+    Builds an invoice_status XML message to notify CRM of a new or updated invoice.
+    Queue: facturatie.to.crm — conform contract section 8.1.
+    """
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "invoice_status"
+    ET.SubElement(header, "version").text = "2.0"
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "invoice_id").text = invoice_id
+    ET.SubElement(body, "user_id").text = user_id
+    ET.SubElement(body, "status").text = status
+    amount_el = ET.SubElement(body, "amount")
+    amount_el.text = amount
+    amount_el.set("currency", currency.lower())
+    if due_date:
+        ET.SubElement(body, "due_date").text = due_date
+
+    ET.indent(root, space="    ")
+    xml_str = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
+
+    is_valid, error_msg = validate_xml(xml_str, "invoice_status")
+    if not is_valid:
+        raise ValueError(f"[SENDER] invoice_status XSD validation failed: {error_msg}")
+
+    return xml_str
+
+
+def publish_invoice_status(
+    invoice_id: str,
+    user_id: str,
+    status: str,
+    amount: str,
+    currency: str = "eur",
+    due_date: str | None = None,
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """Publishes an invoice_status notification to the CRM queue."""
+    xml_message = build_invoice_status_xml(
+        invoice_id=invoice_id,
+        user_id=user_id,
+        status=status,
+        amount=amount,
+        currency=currency,
+        due_date=due_date,
+    )
+    send_message(xml_message, routing_key=CRM_QUEUE, channel=channel)
+    logging.info(
+        "[SENDER] invoice_status sent to '%s' | invoice_id=%s | status=%s",
+        CRM_QUEUE, invoice_id, status,
+    )
+
+
 def build_invoice_link_xml(
     invoice_id: str,
     master_uuid: str,

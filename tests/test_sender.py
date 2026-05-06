@@ -141,7 +141,7 @@ def test_payment_invoice_id_in_body(payment_xml) -> None:
 
 
 def test_payment_customer_id_in_body(payment_xml) -> None:
-    assert parse(payment_xml).findtext("body/customer_id") == CUSTOMER_ID
+    assert parse(payment_xml).findtext("body/user_id") == CUSTOMER_ID
 
 
 def test_payment_amount_and_currency(payment_xml) -> None:

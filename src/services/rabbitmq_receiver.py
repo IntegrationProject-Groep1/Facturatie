@@ -1,20 +1,19 @@
 import logging
+import os
 import pika
 import pika.channel
 import pika.spec
-from dotenv import load_dotenv
-import os
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import fromstring as defused_fromstring
-from datetime import datetime, timezone
+from dotenv import load_dotenv
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
 from .rabbitmq_sender import (
     build_invoice_created_notification_xml,
-    build_payment_confirmed_xml,
     publish_cancellation_failed,
     publish_invoice_cancelled,
     publish_invoice_link,
+    publish_invoice_status,
     send_message,
 )
 from src.utils.xml_validator import validate_xml
@@ -203,6 +202,19 @@ def process_message(
             publish_invoice_link(invoice_id, master_uuid, channel=channel)
         except Exception as link_err:
             logging.warning("[RECEIVER] Invoice created but invoice_link failed: %s", link_err)
+
+        try:
+            publish_invoice_status(
+                invoice_id=invoice_id,
+                user_id=customer_data.get("customer_id", ""),
+                status="sent",
+                amount=customer_data.get("registration_fee", "0.00"),
+                currency=customer_data.get("fee_currency", "eur"),
+                channel=channel,
+            )
+        except Exception as status_err:
+            logging.warning("[RECEIVER] Invoice created but invoice_status failed: %s", status_err)
+
         send_log("info", "invoice", f"Registration invoice created: {invoice_id}", channel=channel)
 
         channel.basic_ack(delivery_tag=method.delivery_tag)
@@ -259,6 +271,17 @@ def process_message(
                 publish_invoice_link(invoice_id, master_uuid, channel=channel)
             except Exception as link_err:
                 logging.warning("[RECEIVER] Invoice created but invoice_link failed: %s", link_err)
+
+            try:
+                publish_invoice_status(
+                    invoice_id=invoice_id,
+                    user_id=user_id,
+                    status="sent",
+                    amount="0.00",
+                    channel=channel,
+                )
+            except Exception as status_err:
+                logging.warning("[RECEIVER] Invoice created but invoice_status failed: %s", status_err)
 
             logging.info(
                 "[RECEIVER] invoice_request processed | invoice_id=%s | correlation_id=%s",
@@ -373,6 +396,19 @@ def process_message(
                             "[RECEIVER] Invoice created but invoice_link failed for %s: %s", company_id, link_err
                             )
 
+                    try:
+                        publish_invoice_status(
+                            invoice_id=invoice_id,
+                            user_id=meta.get("customer_id", ""),
+                            status="sent",
+                            amount="0.00",
+                            channel=channel,
+                        )
+                    except Exception as status_err:
+                        logging.warning(
+                            "[RECEIVER] Invoice created but invoice_status failed for %s: %s", company_id, status_err
+                        )
+
                     logging.info(
                         "[RECEIVER] event_ended: invoice processed | company_id=%s | invoice_id=%s",
                         company_id, invoice_id,
@@ -416,22 +452,13 @@ def process_message(
                 raise ValueError("Missing <transaction> element")
 
             payment_method = transaction_el.findtext("payment_method") or ""
-            transaction_id = transaction_el.findtext("id") or ""
-
-            # Inkomende waarden (Kassa) mappen naar outgoing waarden (contract §8.2)
-            payment_method_map = {
-                "on_site":      "cash",
-                "online":       "card",
-                "company_link": "bank_transfer",
-            }
-            payment_method_out = payment_method_map.get(payment_method, "cash")
 
             user_id = root.findtext("body/user_id") or ""
 
             print(
                 f"[RECEIVER] Payment data extracted"
                 f" | invoice_id={invoice_id} | amount={amount} {currency}"
-                f" | method={payment_method} | transaction_id={transaction_id}"
+                f" | method={payment_method}"
             )
 
             success = pay_invoice(invoice_id, amount)
@@ -440,23 +467,21 @@ def process_message(
 
             print(f"[RECEIVER] Payment registered in FossBilling | invoice_id={invoice_id}")
 
-            paid_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            confirmation_xml = build_payment_confirmed_xml(
-                invoice_id=invoice_id,
-                customer_id=user_id,
-                amount=amount,
-                currency=currency,
-                payment_method=payment_method_out,
-                paid_at=paid_at,
-            )
-            send_message(
-                confirmation_xml,
-                routing_key="facturatie.to.crm",
-                channel=channel,
-            )
+            try:
+                publish_invoice_status(
+                    invoice_id=invoice_id,
+                    user_id=user_id,
+                    status="paid",
+                    amount=amount or "0.00",
+                    currency=currency,
+                    channel=channel,
+                )
+            except Exception as status_err:
+                logging.warning("[RECEIVER] Payment registered but invoice_status failed: %s", status_err)
+
             print(
-                f"[RECEIVER] payment_registered confirmation sent"
-                f" | invoice_id={invoice_id} | correlation_id={msg_id}"
+                f"[RECEIVER] invoice_status (paid) sent"
+                f" | invoice_id={invoice_id}"
             )
 
             send_log("info", "payment", f"Payment registered for invoice {invoice_id}", channel=channel)

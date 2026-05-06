@@ -25,8 +25,8 @@ TIMESTAMP      = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 UNIQUE_SUFFIX  = uuid.uuid4().hex[:6]
 
 EMAIL          = f"testklant-{UNIQUE_SUFFIX}@voorbeeld.be"
-FIRST_NAME     = "John"
-LAST_NAME      = "Smith"
+FIRST_NAME     = "Jan"
+LAST_NAME      = "Janssens"
 IS_COMPANY     = False          # True = bedrijfsklant, False = particulier
 COMPANY_ID     = ""             # Enkel nodig als IS_COMPANY = True
 COMPANY_NAME   = ""             # Enkel nodig als IS_COMPANY = True
@@ -50,10 +50,10 @@ def build_xml() -> str:
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = MSG_ID
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "new_registration"
     ET.SubElement(header, "timestamp").text = TIMESTAMP
     ET.SubElement(header, "source").text = "test_script"
+    ET.SubElement(header, "type").text = "new_registration"
+    ET.SubElement(header, "version").text = "2.0"
 
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")

@@ -58,10 +58,10 @@ def build_xml() -> str:
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = MSG_ID
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "new_registration"
     ET.SubElement(header, "timestamp").text = TIMESTAMP
     ET.SubElement(header, "source").text = "test_script"
+    ET.SubElement(header, "type").text = "new_registration"
+    ET.SubElement(header, "version").text = "2.0"
 
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")
