@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   TYPE   : send_mailing
-  FLOW   : Facturatie → Mailing  (queue: crm.to.mailing)
+  FLOW   : Facturatie → Mailing  (queue: facturatie.to.mailing)
   VERSIE : 2.0
   Mailing gebruikt hetzelfde schema voor CRM én Facturatie — source onderscheidt de afzender.
   Conform contract sectie 13.1
@@ -69,8 +69,8 @@
             <xs:element name="recipient" maxOccurs="unbounded">
               <xs:complexType>
                 <xs:sequence>
-                  <xs:element name="email"       type="xs:string"/>
-                  <xs:element name="customer_id" type="xs:string"/>
+                  <xs:element name="email"   type="xs:string"/>
+                  <xs:element name="user_id" type="xs:string"/>
                   <xs:element name="contact">
                     <xs:complexType>
                       <xs:sequence>
