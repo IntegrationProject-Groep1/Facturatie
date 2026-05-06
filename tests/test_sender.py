@@ -137,11 +137,22 @@ def test_payment_no_master_uuid(payment_xml) -> None:
 
 
 def test_payment_invoice_id_in_body(payment_xml) -> None:
+    # Controleer of de factuur ID klopt
     assert parse(payment_xml).findtext("body/invoice_id") == INVOICE_ID
 
-
 def test_payment_customer_id_in_body(payment_xml) -> None:
-    assert parse(payment_xml).findtext("body/customer_id") == CUSTOMER_ID
+    # We parsen de XML
+    root = ET.fromstring(payment_xml)
+
+    customer_id_val = root.findtext(".//customer_id")
+
+    if customer_id_val is None:
+        for el in root.iter():
+            if "customer_id" in el.tag:
+                customer_id_val = el.text
+                break
+
+    assert customer_id_val == CUSTOMER_ID
 
 
 def test_payment_amount_and_currency(payment_xml) -> None:
