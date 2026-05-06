@@ -383,6 +383,27 @@ def send_error_to_monitor(error_message: str) -> None:
     send_message(xml_error, routing_key="errors.facturatie")
 
 
+def send_log(level: str, action: str, message: str, channel=None) -> None:
+    """Sends a log message to the monitoring logs queue."""
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<message>
+  <header>
+    <message_id>{uuid.uuid4()}</message_id>
+    <timestamp>{ts}</timestamp>
+    <source>facturatie</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>{level}</level>
+    <action>{action}</action>
+    <message>{message}</message>
+  </body>
+</message>"""
+    send_message(xml, routing_key="logs", channel=channel)
+
+
 if __name__ == "__main__":
     items = [
         {
