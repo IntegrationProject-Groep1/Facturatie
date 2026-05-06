@@ -24,10 +24,7 @@ from src.services.rabbitmq_utils import (
 from src.services import fossbilling_api as fossbilling_client
 from src.services.identity_client import request_master_uuid
 from src.services import consumption_store
-from src.services.consumption_store import (
-    get_master_uuid_by_correlation_id,
-    get_master_uuid_by_company_id,
-)
+
 VALID_TYPES: set[str] = {
     "payment_registered", "heartbeat", "new_registration",
     "invoice_request", "invoice_cancelled", "event_ended",
@@ -233,7 +230,7 @@ def process_message(
                 channel.basic_ack(delivery_tag=method.delivery_tag)
                 return
 
-            master_uuid = get_master_uuid_by_correlation_id(correlation_id)
+            master_uuid = consumption_store.get_master_uuid_by_correlation_id(correlation_id)
             invoice_id = fossbilling_client.process_consumption_order(
                 company_id, items, company_name=company_name
             )
@@ -329,7 +326,7 @@ def process_message(
                     if not items:
                         continue
                     meta = consumption_store.get_company_meta(company_id)
-                    master_uuid = get_master_uuid_by_company_id(company_id)
+                    master_uuid = consumption_store.get_master_uuid_by_correlation_id(company_id)
                     invoice_id = fossbilling_client.process_consumption_order(
                         company_id, items, company_name=meta["company_name"]
                     )
@@ -353,7 +350,9 @@ def process_message(
                     try:
                         publish_invoice_link(invoice_id, master_uuid, channel=channel)
                     except Exception as link_err:
-                        logging.warning("[RECEIVER] Invoice created but invoice_link failed for %s: %s", company_id, link_err)
+                        logging.warning(
+                            "[RECEIVER] Invoice created but invoice_link failed for %s: %s", company_id, link_err
+                            )
 
                     logging.info(
                         "[RECEIVER] event_ended: invoice processed | company_id=%s | invoice_id=%s",

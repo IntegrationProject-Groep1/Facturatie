@@ -12,6 +12,8 @@ from src.utils.xml_validator import validate_xml
 # Load environment variables from the .env file
 load_dotenv()
 
+BILLING_WEB_URL = os.getenv("BILLING_WEB_URL", "https://portal.yourdomain.com").rstrip("/")
+
 
 def build_consumption_order_xml(
     customer_id: str,
@@ -135,7 +137,7 @@ def build_invoice_created_notification_xml(
 
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    billing_web_base = os.getenv("BILLING_WEB_URL", "https://portal.yourdomain.com").rstrip("/")
+    billing_web_base = BILLING_WEB_URL
     pdf_url = f"{billing_web_base}/invoice/{invoice_id}"
 
     root = ET.Element("message")
