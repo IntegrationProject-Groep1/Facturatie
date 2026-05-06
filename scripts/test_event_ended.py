@@ -34,10 +34,10 @@ def simulate_event_flow():
 <message>
     <header>
         <message_id>{uuid.uuid4()}</message_id>
-        <version>2.0</version>
-        <type>event_ended</type>
         <timestamp>2024-01-01T12:00:00Z</timestamp>
         <source>kassa_systeem</source>
+        <type>event_ended</type>
+        <version>2.0</version>
     </header>
     <body>
         <session_id>SESSION-123</session_id>
@@ -61,28 +61,27 @@ def simulate_new_registration():
 <message>
     <header>
         <message_id>{uuid.uuid4()}</message_id>
-        <version>2.0</version>
-        <type>new_registration</type>
         <timestamp>2024-01-01T12:00:00Z</timestamp>
-        <source>crm_system</source>
+        <source>crm</source>
+        <type>new_registration</type>
+        <version>2.0</version>
     </header>
     <body>
         <customer>
-            <customer_id>CUST-456</customer_id>
+            <user_id>{uuid.uuid4()}</user_id>
             <email>{TEST_EMAIL}</email>
+            <date_of_birth>1990-06-15</date_of_birth>
             <contact>
                 <first_name>Jan</first_name>
                 <last_name>Test</last_name>
             </contact>
-            <address>
-                <street>Kerkstraat</street>
-                <number>10</number>
-                <postal_code>1000</postal_code>
-                <city>Brussel</city>
-                <country>BE</country>
-            </address>
+            <type>private</type>
+            <session_id>sess-keynote-001</session_id>
+            <payment_due>
+                <amount currency="eur">50.00</amount>
+                <status>unpaid</status>
+            </payment_due>
         </customer>
-        <registration_fee currency="eur">50.00</registration_fee>
     </body>
 </message>"""
 
