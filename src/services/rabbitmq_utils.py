@@ -66,7 +66,7 @@ def send_to_dlq(
     """
     dlq = os.getenv("QUEUE_DLQ", dlq_name)
 
-    channel.queue_declare(queue=dlq, passive=False)
+    channel.queue_declare(queue=dlq, durable=True)
     channel.basic_publish(
         exchange="",
         routing_key=dlq,
