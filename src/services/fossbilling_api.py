@@ -149,22 +149,19 @@ def create_registration_invoice(customer_data: dict) -> str:
 
 def pay_invoice(invoice_id: str, amount: str) -> bool:
     """
-    Marks an invoice as paid and registers a payment transaction.
-    The transaction_add call sets paid_at to the current date in FossBilling.
+    Marks an invoice as paid. paid_at is sent as a datetime string
+    because FossBilling ignores Unix timestamps for this field.
     """
+    import datetime as dt
+    paid_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     try:
         _api_post("admin/invoice/update", {
             "id": invoice_id,
             "status": "paid",
+            "paid_at": paid_at,
         })
 
-        _api_post("admin/invoice/transaction_add", {
-            "invoice_id": invoice_id,
-            "amount": amount,
-            "type": "payment",
-        })
-
-        print(f"[FOSSBILLING] Invoice '{invoice_id}' marked as PAID")
+        print(f"[FOSSBILLING] Invoice '{invoice_id}' marked as PAID | paid_at={paid_at}")
         return True
 
     except Exception as e:
