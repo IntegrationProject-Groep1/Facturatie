@@ -35,7 +35,7 @@ def _build_xml_bytes(
     body = ET.SubElement(root, "body")
     if invoice_id:
         ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "customer_id").text = customer_id
+    ET.SubElement(body, "user_id").text = customer_id
     if reason:
         ET.SubElement(body, "reason").text = reason
 

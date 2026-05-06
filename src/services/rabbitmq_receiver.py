@@ -19,7 +19,7 @@ from .rabbitmq_sender import (
 )
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
-    get_connection, send_to_dlq
+    get_connection_with_retry, send_to_dlq
 )
 from src.services.rabbitmq_sender import send_log
 from src.services import fossbilling_api as fossbilling_client
@@ -189,7 +189,7 @@ def process_message(
 
         send_message(
             notification_xml,
-            routing_key="crm.to.mailing",
+            routing_key="facturatie.to.mailing",
             channel=channel
         )
 
@@ -250,7 +250,7 @@ def process_message(
                     customer_id=user_id,
                     subject=f"Uw factuur {invoice_id} staat klaar",
                 )
-                send_message(notification_xml, routing_key="crm.to.mailing", channel=channel)
+                send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
             except Exception as mail_err:
                 logging.warning("[RECEIVER] Invoice created but mailing failed: %s", mail_err)
 
@@ -361,7 +361,7 @@ def process_message(
                             customer_id=meta.get("customer_id", ""),
                             subject=f"Uw factuur {invoice_id} staat klaar",
                         )
-                        send_message(notification_xml, routing_key="crm.to.mailing", channel=channel)
+                        send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
                     except Exception as mail_err:
                         logging.warning("[RECEIVER] Invoice created but mail failed for %s: %s", company_id, mail_err)
 
@@ -478,7 +478,7 @@ def process_message(
             return
 
         invoice_id = root.findtext("body/invoice_id")
-        customer_id = root.findtext("body/customer_id") or ""
+        customer_id = root.findtext("body/user_id") or ""
         correlation_id = root.findtext("header/message_id")
 
         if not invoice_id:
@@ -554,21 +554,34 @@ def start_receiver(queue: str | None = None) -> None:
 
     consumption_store.init_db()
 
-    connection = get_connection()
-    channel = connection.channel()
+    print(f"[RECEIVER] Starting — will listen on queue '{queue}'")
 
-    channel.queue_declare(queue=queue, passive=False, durable=True)
-    channel.basic_qos(prefetch_count=1)
-    channel.basic_consume(queue=queue, on_message_callback=process_message)
+    while True:
+        connection = None
+        try:
+            connection = get_connection_with_retry(max_attempts=5)
+            channel = connection.channel()
 
-    print(f"[RECEIVER] Listening on queue '{queue}'... (CTRL+C to stop)")
+            channel.queue_declare(queue=queue, passive=False, durable=True)
+            channel.basic_qos(prefetch_count=1)
+            channel.basic_consume(queue=queue, on_message_callback=process_message)
 
-    try:
-        channel.start_consuming()
-    except KeyboardInterrupt:
-        print("\n[RECEIVER] Stopping consumer...")
-    finally:
-        connection.close()
+            print(f"[RECEIVER] Listening on queue '{queue}'... (CTRL+C to stop)")
+            channel.start_consuming()
+
+        except KeyboardInterrupt:
+            print("\n[RECEIVER] Stopping consumer...")
+            break
+
+        except Exception as e:
+            logging.error("[RECEIVER] Connection lost: %s — reconnecting...", e)
+
+        finally:
+            try:
+                if connection and connection.is_open:
+                    connection.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

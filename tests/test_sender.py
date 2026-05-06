@@ -27,7 +27,7 @@ def parse(xml_str: str) -> ET.Element:
 
 @pytest.fixture
 def notification_xml(monkeypatch):
-    monkeypatch.setenv("BILLING_WEB_URL", "https://portal.yourdomain.com")
+    monkeypatch.setattr("src.services.rabbitmq_sender.BILLING_WEB_URL", "https://portal.yourdomain.com")
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
         return build_invoice_created_notification_xml(
             invoice_id=INVOICE_ID,

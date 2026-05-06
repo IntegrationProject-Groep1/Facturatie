@@ -131,7 +131,7 @@ def build_invoice_created_notification_xml(
 ) -> str:
     """
     Builds a send_mailing XML message to be sent to the Mailing team.
-    Queue: crm.to.mailing
+    Queue: facturatie.to.mailing
     """
     import json
 
@@ -159,7 +159,7 @@ def build_invoice_created_notification_xml(
     recipients = ET.SubElement(body, "recipients")
     recipient = ET.SubElement(recipients, "recipient")
     ET.SubElement(recipient, "email").text = recipient_email
-    ET.SubElement(recipient, "customer_id").text = customer_id or invoice_id
+    ET.SubElement(recipient, "user_id").text = customer_id or invoice_id
     contact = ET.SubElement(recipient, "contact")
     ET.SubElement(contact, "first_name").text = first_name
     ET.SubElement(contact, "last_name").text = last_name
@@ -235,7 +235,7 @@ def build_payment_confirmed_xml(
     )
 
     # Validate against XSD before sending
-    is_valid, error_msg = validate_xml(xml_str, "payment_registered_outgoing")
+    is_valid, error_msg = validate_xml(xml_str, "payement_registered_outgoing")
     if not is_valid:
         raise ValueError(
             f"[SENDER] payment_registered (outgoing) XSD validation failed: {error_msg}"
@@ -270,7 +270,6 @@ def build_invoice_link_xml(
     ET.SubElement(header, "type").text = "invoice_available"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
-    ET.SubElement(header, "master_uuid").text = master_uuid
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "invoice_id").text = invoice_id
