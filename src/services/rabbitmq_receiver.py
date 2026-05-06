@@ -251,11 +251,19 @@ def process_message(
                 "[RECEIVER] invoice_request processed | invoice_id=%s | correlation_id=%s",
                 invoice_id, correlation_id,
             )
-            send_log("info", "invoice", f"invoice_request saved for company_id={company_id}, items={len(items)}", channel=channel)
+            send_log(
+                "info", "invoice",
+                f"invoice_request saved for company_id={company_id}, items={len(items)}",
+                channel=channel,
+            )
             channel.basic_ack(delivery_tag=method.delivery_tag)
 
         except Exception as e:
-            send_log("error", "system_error", f"invoice_request save failed for company_id={company_id}: {e}", channel=channel)
+            send_log(
+                "error", "system_error",
+                f"invoice_request save failed for correlation_id={correlation_id}: {e}",
+                channel=channel,
+            )
             logging.error("[RECEIVER] ERROR: invoice_request_failed: %s", e)
             send_to_dlq(channel, body, [f"ERROR: invoice_request_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
@@ -324,7 +332,11 @@ def process_message(
                     )
 
                     consumption_store.clear_by_ids(row_ids)
-                    send_log("info", "invoice", f"Consolidated invoice {invoice_id} created for company {company_id}", channel=channel)
+                    send_log(
+                        "info", "invoice",
+                        f"Consolidated invoice {invoice_id} created for company {company_id}",
+                        channel=channel,
+                    )
 
                     try:
                         notification_xml = build_invoice_created_notification_xml(
