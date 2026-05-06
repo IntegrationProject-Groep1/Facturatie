@@ -21,6 +21,7 @@ from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
     get_connection, send_to_dlq
 )
+from src.services.rabbitmq_sender import send_log
 from src.services import fossbilling_api as fossbilling_client
 from src.services.identity_client import request_master_uuid
 from src.services import consumption_store
@@ -173,6 +174,7 @@ def process_message(
             # Create registration invoice in FossBilling
             invoice_id = create_registration_invoice(customer_data)
         except Exception as e:
+            send_log("error", "system_error", f"FossBilling failed for new_registration: {e}", channel=channel)
             # Handle failure and move to Dead Letter Queue
             send_to_dlq(channel, body, [f"ERROR: fossbilling_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
@@ -203,6 +205,7 @@ def process_message(
             publish_invoice_link(invoice_id, master_uuid, channel=channel)
         except Exception as link_err:
             logging.warning("[RECEIVER] Invoice created but invoice_link failed: %s", link_err)
+        send_log("info", "invoice", f"Registration invoice created: {invoice_id}", channel=channel)
 
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -263,9 +266,19 @@ def process_message(
                 "[RECEIVER] invoice_request processed | invoice_id=%s | correlation_id=%s",
                 invoice_id, correlation_id,
             )
+            send_log(
+                "info", "invoice",
+                f"invoice_request saved for company_id={company_id}, items={len(items)}",
+                channel=channel,
+            )
             channel.basic_ack(delivery_tag=method.delivery_tag)
 
         except Exception as e:
+            send_log(
+                "error", "system_error",
+                f"invoice_request save failed for correlation_id={correlation_id}: {e}",
+                channel=channel,
+            )
             logging.error("[RECEIVER] ERROR: invoice_request_failed: %s", e)
             send_to_dlq(channel, body, [f"ERROR: invoice_request_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
@@ -335,6 +348,11 @@ def process_message(
                     )
 
                     consumption_store.clear_by_ids(row_ids)
+                    send_log(
+                        "info", "invoice",
+                        f"Consolidated invoice {invoice_id} created for company {company_id}",
+                        channel=channel,
+                    )
 
                     try:
                         notification_xml = build_invoice_created_notification_xml(
@@ -370,6 +388,7 @@ def process_message(
                 channel.basic_ack(delivery_tag=method.delivery_tag)
 
         except Exception as e:
+            send_log("error", "system_error", f"FossBilling failed for company_id={company_id}: {e}", channel=channel)
             logging.error("[RECEIVER] ERROR: event_ended_failed: %s", e)
             send_to_dlq(channel, body, [f"ERROR: event_ended_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
@@ -440,9 +459,12 @@ def process_message(
                 f" | invoice_id={invoice_id} | correlation_id={msg_id}"
             )
 
+            send_log("info", "payment", f"Payment registered for invoice {invoice_id}", channel=channel)
+
             channel.basic_ack(delivery_tag=method.delivery_tag)
 
         except Exception as e:
+            send_log("error", "system_error", f"FossBilling payment failed: {e}", channel=channel)
             print(f"[RECEIVER] ERROR: payment_registered_failed: {e}")
             send_to_dlq(channel, body, [f"ERROR: payment_registered_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
@@ -518,6 +540,7 @@ def process_message(
             return
 
         publish_invoice_cancelled(invoice_id, customer_id, channel=channel)
+        send_log("info", "invoice", f"Invoice {invoice_id} cancelled", channel=channel)
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
