@@ -149,19 +149,22 @@ def create_registration_invoice(customer_data: dict) -> str:
 
 def pay_invoice(invoice_id: str, amount: str) -> bool:
     """
-    Marks an invoice as paid by updating its status directly.
-    Works on all FossBilling versions.
+    Marks an invoice as paid and registers a payment transaction.
+    The transaction_add call sets paid_at to the current date in FossBilling.
     """
     try:
-        payload = {
+        _api_post("admin/invoice/update", {
             "id": invoice_id,
             "status": "paid",
-            "paid_at": int(time.time())
-        }
+        })
 
-        _api_post("admin/invoice/update", payload)
+        _api_post("admin/invoice/transaction_add", {
+            "invoice_id": invoice_id,
+            "amount": amount,
+            "type": "payment",
+        })
 
-        print(f"[FOSSBILLING] Invoice '{invoice_id}' marked as PAID via update()")
+        print(f"[FOSSBILLING] Invoice '{invoice_id}' marked as PAID")
         return True
 
     except Exception as e:
