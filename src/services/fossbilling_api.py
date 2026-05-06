@@ -6,6 +6,7 @@ import uuid
 import requests
 from dotenv import load_dotenv
 from .consumption_store import get_company_client_id, save_company_client_id
+import datetime as dt
 
 load_dotenv()
 
@@ -149,19 +150,18 @@ def create_registration_invoice(customer_data: dict) -> str:
 
 def pay_invoice(invoice_id: str, amount: str) -> bool:
     """
-    Marks an invoice as paid by updating its status directly.
-    Works on all FossBilling versions.
+    Marks an invoice as paid. paid_at is sent as a datetime string
+    because FossBilling ignores Unix timestamps for this field.
     """
+    paid_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     try:
-        payload = {
+        _api_post("admin/invoice/update", {
             "id": invoice_id,
             "status": "paid",
-            "paid_at": int(time.time())
-        }
+            "paid_at": paid_at,
+        })
 
-        _api_post("admin/invoice/update", payload)
-
-        print(f"[FOSSBILLING] Invoice '{invoice_id}' marked as PAID via update()")
+        logging.info("[FOSSBILLING] Invoice '%s' marked as PAID | paid_at=%s", invoice_id, paid_at)
         return True
 
     except Exception as e:
