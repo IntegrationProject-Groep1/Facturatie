@@ -63,20 +63,21 @@ def validate_invoice_cancelled(root: ET.Element) -> list[str]:
 def extract_customer_data(root: ET.Element) -> dict:
     """
     Extracts customer and registration data from a new_registration XML message.
+    Conform gedeeld contract: geen registration_fee, geen address, geen is_company_linked.
     """
-    fee_el = root.find("body/registration_fee")
+    amount_el = root.find("body/customer/payment_due/amount")
     return {
-        "customer_id": root.findtext("body/customer/customer_id") or "",
+        "customer_id": root.findtext("body/customer/user_id") or "",
         "email": root.findtext("body/customer/email"),
         "first_name": root.findtext("body/customer/contact/first_name") or "",
         "last_name": root.findtext("body/customer/contact/last_name") or "",
         "company_name": root.findtext("body/customer/company_name") or "",
+        "company_id": root.findtext("body/customer/company_id") or "",
         "address": {
-            field: root.findtext(f"body/customer/address/{field}") or ""
-            for field in ["street", "number", "postal_code", "city", "country"]
+            "street": "", "number": "", "postal_code": "", "city": "", "country": ""
         },
-        "registration_fee": root.findtext("body/registration_fee"),
-        "fee_currency": fee_el.get("currency", "eur") if fee_el is not None else "eur",
+        "registration_fee": amount_el.text if amount_el is not None else "0.00",
+        "fee_currency": amount_el.get("currency", "eur") if amount_el is not None else "eur",
     }
 
 

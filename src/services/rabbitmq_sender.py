@@ -221,7 +221,7 @@ def build_payment_confirmed_xml(
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "customer_id").text = customer_id
+    ET.SubElement(body, "user_id").text = customer_id
     amount_el = ET.SubElement(body, "amount_paid")
     amount_el.text = amount
     amount_el.set("currency", currency_lower)
@@ -235,7 +235,7 @@ def build_payment_confirmed_xml(
     )
 
     # Validate against XSD before sending
-    is_valid, error_msg = validate_xml(xml_str, "payement_registered_outgoing")
+    is_valid, error_msg = validate_xml(xml_str, "payment_registered_outgoing")
     if not is_valid:
         raise ValueError(
             f"[SENDER] payment_registered (outgoing) XSD validation failed: {error_msg}"
