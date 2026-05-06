@@ -111,10 +111,10 @@ def build_event_ended_xml(
     root = ET.Element("message")
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "event_ended"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = "frontend"
+    ET.SubElement(header, "type").text = "event_ended"
+    ET.SubElement(header, "version").text = "2.0"
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "session_id").text = session_id

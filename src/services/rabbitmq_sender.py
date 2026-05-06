@@ -323,7 +323,7 @@ def build_invoice_cancelled_xml(
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "customer_id").text = customer_id
+    ET.SubElement(body, "user_id").text = customer_id
     if reason:
         ET.SubElement(body, "reason").text = reason
 
