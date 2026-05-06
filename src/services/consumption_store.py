@@ -16,7 +16,7 @@ def _get_pool() -> mysql.connector.pooling.MySQLConnectionPool:
         _pool = mysql.connector.pooling.MySQLConnectionPool(
             pool_name="facturatie_pool",
             pool_size=5,
-            host=os.getenv("DB_HOST", "facturatie-db-service"),
+            host=os.getenv("DB_HOST", "mysql"),
             database=os.getenv("MYSQL_DATABASE", "fossbilling"),
             user=os.getenv("MYSQL_USER"),
             password=os.getenv("MYSQL_PASSWORD"),
