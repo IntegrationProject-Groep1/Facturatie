@@ -141,16 +141,14 @@ def test_payment_invoice_id_in_body(payment_xml) -> None:
     assert parse(payment_xml).findtext("body/invoice_id") == INVOICE_ID
 
 def test_payment_customer_id_in_body(payment_xml) -> None:
-    # We parsen de XML
+    # Parse the XML string into an ElementTree object
     root = ET.fromstring(payment_xml)
 
-    customer_id_val = root.findtext(".//customer_id")
+    customer_id_val = root.findtext(".//customer_id") or root.findtext(".//user_id")
 
     if customer_id_val is None:
-        for el in root.iter():
-            if "customer_id" in el.tag:
-                customer_id_val = el.text
-                break
+        all_tags = [el.tag for el in root.iter()]
+        pytest.fail(f"Could not find customer_id or user_id. Found tags: {all_tags}")
 
     assert customer_id_val == CUSTOMER_ID
 
