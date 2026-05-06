@@ -49,6 +49,7 @@ def _build_invoice_request_xml(
     user_id: str = "BADGE-007",
     company_name: str = "Bedrijf NV",
     correlation_id: str = "corr-001",
+    customer_type: str = "private",
 ) -> bytes:
     """
     Bouwt een invoice_request XML conform de nieuwe structuur (contract §11.1).
@@ -71,6 +72,8 @@ def _build_invoice_request_xml(
     ET.SubElement(body, "user_id").text = user_id
 
     invoice_data = ET.SubElement(body, "invoice_data")
+
+    ET.SubElement(invoice_data, "type").text = customer_type
     # Volgorde conform InvoiceDataType XSD: first_name → last_name → email → address → company_name → vat_number
     ET.SubElement(invoice_data, "first_name").text = "Test"
     ET.SubElement(invoice_data, "last_name").text = "User"
@@ -83,7 +86,11 @@ def _build_invoice_request_xml(
     ET.SubElement(address, "city").text = "Brussel"
     ET.SubElement(address, "country").text = "be"
 
-    ET.SubElement(invoice_data, "company_name").text = company_name
+    if company_name:
+        ET.SubElement(invoice_data, "company_name").text = company_name
+    else:
+        ET.SubElement(invoice_data, "company_name").text = ""
+
     ET.SubElement(invoice_data, "vat_number").text = "BE0123456789"
 
     ET.indent(root, space="    ")
@@ -351,6 +358,7 @@ class TestProcessMessageInvoiceRequest:
         body = _build_invoice_request_xml(
             msg_id="11111111-1111-4111-1111-111111111113",
             company_name="",
+            customer_type="company"
         )
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \

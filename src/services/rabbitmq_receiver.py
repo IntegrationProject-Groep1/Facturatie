@@ -99,6 +99,7 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
         "user_id": root.findtext("body/user_id") or "",
         "correlation_id": root.findtext("header/correlation_id") or "",
         "customer": {
+            "type": root.findtext("body/invoice_data/type") or "private",
             # Namen zitten direct in <invoice_data> — geen <contact> wrapper (§11.1 uitzondering)
             "first_name": root.findtext("body/invoice_data/first_name") or "",
             "last_name": root.findtext("body/invoice_data/last_name") or "",
@@ -213,10 +214,24 @@ def process_message(
         correlation_id = data["correlation_id"]
         customer = data["customer"]
         company_name = customer["company_name"]
-        if not company_name:
-            send_to_dlq(channel, body, ["ERROR: invoice_request requires company_name in invoice_data"])
-            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-            return
+
+        customer_type = customer.get("type", "private")
+        company_name = customer.get("company_name")
+        vat_number = customer.get("vat_number")
+        first_name = customer.get("first_name", "Onbekend")
+        last_name = customer.get("last_name", "Klant")
+        customer_email = customer.get("email")
+
+        if customer_type == "company":
+            if not company_name:
+                send_to_dlq(channel, body, ["ERROR: invoice_request for company requires company_name"])
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+                return
+
+            if not vat_number:
+                send_to_dlq(channel, body, ["ERROR: invoice_request for company requires vat_number"])
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+                return
 
         try:
             consumption_store.update_meta_by_correlation_id(
@@ -236,7 +251,12 @@ def process_message(
 
             master_uuid = user_id
             invoice_id = fossbilling_client.process_consumption_order(
-                company_id, items, company_name=company_name
+                company_id,
+                items,
+                company_name=company_name,
+                first_name=first_name,
+                last_name=last_name,
+                email=customer_email
             )
 
             consumption_store.clear_by_ids(row_ids)

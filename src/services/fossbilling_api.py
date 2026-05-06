@@ -226,13 +226,20 @@ def _billing_email(company_id: str) -> str:
     return f"billing.{safe}@facturatie.be"
 
 
-def _get_or_create_billing_client(company_id: str, company_name: str) -> int:
+def _get_or_create_billing_client(
+        company_id: str,
+        company_name: str,
+        first_name: str = "",
+        last_name: str = "",
+        email: str = None) -> int:
     """Returns the FossBilling client_id for the company billing account, creating it if needed."""
     client_id = get_company_client_id(company_id)
     if client_id is not None:
         return client_id
 
-    email = _billing_email(company_id)
+    if email is None:
+        email = _billing_email(company_id)
+
     existing_id = _get_client_by_email(email)
     if existing_id is not None:
         save_company_client_id(company_id, existing_id)
@@ -240,11 +247,11 @@ def _get_or_create_billing_client(company_id: str, company_name: str) -> int:
 
     payload = {
         "email": email,
-        "first_name": company_name or company_id,
-        "last_name": "-",
+        "first_name": first_name or company_name or company_id,
+        "last_name": last_name or "-",
         "password": f"Billing-{uuid.uuid4()}",
         "password_confirm": "",
-        "company": company_name or company_id,
+        "company": company_name or "",
         "currency": "EUR",
         "country": "BE",
     }
@@ -258,7 +265,13 @@ def _get_or_create_billing_client(company_id: str, company_name: str) -> int:
     return new_id
 
 
-def process_consumption_order(company_id: str, items: list[dict], company_name: str = "") -> str:
+def process_consumption_order(
+        company_id: str,
+        items: list[dict],
+        company_name: str = "",
+        first_name: str = "",
+        last_name: str = "",
+        email: str = None) -> str:
     """
     Creates one consolidated invoice for the given company with all provided items.
     Called at event-end after items have been accumulated in MySQL.
@@ -269,7 +282,13 @@ def process_consumption_order(company_id: str, items: list[dict], company_name: 
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            client_id = _get_or_create_billing_client(company_id, company_name)
+            client_id = _get_or_create_billing_client(
+                company_id,
+                company_name,
+                first_name=first_name,
+                last_name=last_name,
+                email=email
+                )
             invoice_id = _create_invoice(client_id, items)
             logging.info(
                 "[FOSSBILLING] Consolidated invoice created | invoice_id=%s | company_id=%s",
