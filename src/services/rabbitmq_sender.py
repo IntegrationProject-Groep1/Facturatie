@@ -248,7 +248,7 @@ def build_payment_confirmed_xml(
     )
 
     # Validate against XSD before sending
-    is_valid, error_msg = validate_xml(xml_str, "payment_registered")
+    is_valid, error_msg = validate_xml(xml_str, "payment_registered_outgoing")
     if not is_valid:
         raise ValueError(
             f"[SENDER] payment_registered XSD validation failed: {error_msg}"
