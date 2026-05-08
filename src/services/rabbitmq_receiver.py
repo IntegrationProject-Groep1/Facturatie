@@ -456,7 +456,7 @@ def process_message(
             }
             payment_method_out = payment_method_map.get(payment_method, "cash")
 
-            user_id = root.findtext("body/user_id") or ""
+            identity_uuid = root.findtext("body/identity_uuid") or root.findtext("body/user_id") or ""
 
             print(
                 f"[RECEIVER] Payment data extracted"
@@ -473,15 +473,16 @@ def process_message(
             paid_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             confirmation_xml = build_payment_confirmed_xml(
                 invoice_id=invoice_id,
-                customer_id=user_id,
+                identity_uuid=identity_uuid,
                 amount=amount,
                 currency=currency,
                 payment_method=payment_method_out,
                 paid_at=paid_at,
             )
+            from src.services.rabbitmq_sender import CRM_QUEUE
             send_message(
                 confirmation_xml,
-                routing_key="facturatie.to.crm",
+                routing_key=CRM_QUEUE,
                 channel=channel,
             )
             print(
