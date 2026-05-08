@@ -157,13 +157,23 @@ def get_company_meta(company_id: str) -> dict:
 
 
 def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[int], str]:
-    """Returns (items, row_ids, company_id) for a specific consumption_order matched by its message_id."""
     conn = _get_connection()
     try:
         with conn.cursor(dictionary=True) as cursor:
+            # Stap 1: company_id ophalen via de correlation_id
             cursor.execute(
-                "SELECT * FROM pending_consumptions WHERE consumption_order_id = %s ORDER BY received_at",
+                "SELECT company_id FROM pending_consumptions WHERE consumption_order_id = %s LIMIT 1",
                 (correlation_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return [], [], ""
+            company_id = row["company_id"]
+
+            # Stap 2: ALLE items van dat bedrijf ophalen
+            cursor.execute(
+                "SELECT * FROM pending_consumptions WHERE company_id = %s ORDER BY received_at",
+                (company_id,),
             )
             rows = cursor.fetchall()
     finally:
@@ -179,7 +189,6 @@ def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[i
         for row in rows
     ]
     row_ids = [row["id"] for row in rows]
-    company_id = rows[0]["company_id"] if rows else ""
     return items, row_ids, company_id
 
 
