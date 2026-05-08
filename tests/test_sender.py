@@ -112,6 +112,7 @@ def payment_xml():
             currency="eur",
             payment_method="cash",
             paid_at="2026-05-01T10:00:00Z",
+            payment_context="consumption",
         )
 
 
@@ -137,31 +138,22 @@ def test_payment_no_master_uuid(payment_xml) -> None:
 
 
 def test_payment_invoice_id_in_body(payment_xml) -> None:
-    # Controleer of de factuur ID klopt
-    assert parse(payment_xml).findtext("body/invoice_id") == INVOICE_ID
+    assert parse(payment_xml).findtext("body/invoice/id") == INVOICE_ID
+
 
 def test_payment_customer_id_in_body(payment_xml) -> None:
-    # Parse the XML string into an ElementTree object
-    root = ET.fromstring(payment_xml)
-
-    customer_id_val = root.findtext(".//customer_id") or root.findtext(".//user_id")
-
-    if customer_id_val is None:
-        all_tags = [el.tag for el in root.iter()]
-        pytest.fail(f"Could not find customer_id or user_id. Found tags: {all_tags}")
-
-    assert customer_id_val == CUSTOMER_ID
+    assert parse(payment_xml).findtext("body/identity_uuid") == CUSTOMER_ID
 
 
 def test_payment_amount_and_currency(payment_xml) -> None:
-    amount_el = parse(payment_xml).find("body/amount_paid")
+    amount_el = parse(payment_xml).find("body/invoice/amount_paid")
     assert amount_el is not None
     assert amount_el.text == "150.00"
     assert amount_el.get("currency") == "eur"
 
 
 def test_payment_method(payment_xml) -> None:
-    assert parse(payment_xml).findtext("body/payment_method") == "cash"
+    assert parse(payment_xml).findtext("body/invoice/status") == "paid"
 
 
 def test_payment_non_eur_currency_is_forced_to_eur() -> None:
@@ -173,7 +165,7 @@ def test_payment_non_eur_currency_is_forced_to_eur() -> None:
             currency="USD",
             payment_method="card",
         )
-    amount_el = parse(xml).find("body/amount_paid")
+    amount_el = parse(xml).find("body/invoice/amount_paid")
     assert amount_el.get("currency") == "eur"
 
 
