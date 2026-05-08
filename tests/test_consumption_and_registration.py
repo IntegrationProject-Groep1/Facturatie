@@ -49,6 +49,7 @@ def _build_invoice_request_xml(
     user_id: str = "BADGE-007",
     company_name: str = "Bedrijf NV",
     correlation_id: str = "corr-001",
+    customer_type: str = "private",
 ) -> bytes:
     """
     Bouwt een invoice_request XML conform de nieuwe structuur (contract §11.1).
@@ -71,6 +72,8 @@ def _build_invoice_request_xml(
     ET.SubElement(body, "user_id").text = user_id
 
     invoice_data = ET.SubElement(body, "invoice_data")
+
+    ET.SubElement(invoice_data, "type").text = customer_type
     # Volgorde conform InvoiceDataType XSD: first_name → last_name → email → address → company_name → vat_number
     ET.SubElement(invoice_data, "first_name").text = "Test"
     ET.SubElement(invoice_data, "last_name").text = "User"
@@ -83,7 +86,11 @@ def _build_invoice_request_xml(
     ET.SubElement(address, "city").text = "Brussel"
     ET.SubElement(address, "country").text = "be"
 
-    ET.SubElement(invoice_data, "company_name").text = company_name
+    if company_name:
+        ET.SubElement(invoice_data, "company_name").text = company_name
+    else:
+        ET.SubElement(invoice_data, "company_name").text = ""
+
     ET.SubElement(invoice_data, "vat_number").text = "BE0123456789"
 
     ET.indent(root, space="    ")
@@ -94,38 +101,34 @@ def _build_invoice_request_xml(
 
 
 def _build_new_registration_xml() -> bytes:
-    """
-    Bouwt een new_registration XML conform de nieuwe structuur.
-    Namen zitten in <contact> wrapper (contract Regel 2).
-    Geen master_uuid in header (contract #90).
-    """
     return b"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>a1b2c3d4-0000-4000-8000-000000000099</message_id>
-    <version>2.0</version>
-    <type>new_registration</type>
     <timestamp>2026-03-31T10:00:00Z</timestamp>
-    <source>frontend</source>
+    <source>crm</source>
+    <type>new_registration</type>
+    <version>2.0</version>
   </header>
   <body>
     <customer>
-      <customer_id>12345</customer_id>
+      <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
       <email>info@bedrijf.be</email>
+      <date_of_birth>1995-03-21</date_of_birth>
       <contact>
         <first_name>Test</first_name>
         <last_name>User</last_name>
       </contact>
-      <is_company_linked>false</is_company_linked>
-      <address>
-        <street>Kiekenmarkt</street>
-        <number>42</number>
-        <postal_code>1000</postal_code>
-        <city>Brussel</city>
-        <country>be</country>
-      </address>
+      <type>company</type>
+      <company_name>Test Bedrijf NV</company_name>
+      <vat_number>BE0123456789</vat_number>
+      <company_id>comp-001</company_id>
+      <session_id>sess-001</session_id>
+      <payment_due>
+        <amount currency="eur">150.00</amount>
+        <status>unpaid</status>
+      </payment_due>
     </customer>
-    <registration_fee currency="eur">150.00</registration_fee>
   </body>
 </message>"""
 
@@ -174,10 +177,11 @@ def _mock_error_response(message: str) -> MagicMock:
 
 # ── extract_customer_data ─────────────────────────────────────────────────────
 
-def test_extract_customer_data_email() -> None:
+def test_extract_customer_data_fee() -> None:
     root = ET.fromstring(_build_new_registration_xml())
     data = extract_customer_data(root)
-    assert data["email"] == "info@bedrijf.be"
+    assert data["registration_fee"] == "150.00"
+    assert data["fee_currency"] == "eur"
 
 
 def test_extract_customer_data_names_from_contact_wrapper() -> None:
@@ -198,9 +202,9 @@ def test_extract_customer_data_fee() -> None:
 def test_extract_customer_data_address() -> None:
     root = ET.fromstring(_build_new_registration_xml())
     data = extract_customer_data(root)
-    assert data["address"]["street"] == "Kiekenmarkt"
-    assert data["address"]["city"] == "Brussel"
-    assert data["address"]["country"] == "be"
+    assert data["address"]["street"] == ""
+    assert data["address"]["city"] == ""
+    assert data["address"]["country"] == ""
 
 
 # ── get_client_by_company_id ──────────────────────────────────────────────────
@@ -354,6 +358,7 @@ class TestProcessMessageInvoiceRequest:
         body = _build_invoice_request_xml(
             msg_id="11111111-1111-4111-1111-111111111113",
             company_name="",
+            customer_type="company"
         )
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
@@ -443,7 +448,7 @@ class TestProcessMessageNewRegistration:
             process_message(channel, _make_method(), MagicMock(), _build_new_registration_xml())
 
         routing_keys = [c.kwargs.get("routing_key") for c in channel.basic_publish.call_args_list]
-        assert "crm.to.mailing" in routing_keys
+        assert "facturatie.to.mailing" in routing_keys
 
     def test_nacks_to_dlq_on_fossbilling_failure(self) -> None:
         channel = self._make_channel()

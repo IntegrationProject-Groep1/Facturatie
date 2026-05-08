@@ -136,10 +136,10 @@ def build_event_ended() -> str:
         "<message>\n"
         "  <header>\n"
         f"    <message_id>{uuid.uuid4()}</message_id>\n"
-        "    <version>2.0</version>\n"
-        "    <type>event_ended</type>\n"
         f"    <timestamp>{ts()}</timestamp>\n"
         "    <source>frontend</source>\n"
+        "    <type>event_ended</type>\n"
+        "    <version>2.0</version>\n"
         "  </header>\n"
         "  <body>\n"
         f"    <session_id>{session_id}</session_id>\n"
@@ -271,6 +271,6 @@ print("  - FossBilling: 3 facturen verwacht")
 print("    • Bedrijf NV billing account → Coca-Cola + Water (BADGE-001)")
 print("    • Tech Corp billing account  → Koffie + Cola (BADGE-003)")
 print("    • Bedrijf NV billing account → Fanta (BADGE-002, via event_ended)")
-print("  - RabbitMQ crm.to.mailing: 3 mailing berichten verwacht")
+print("  - RabbitMQ facturatie.to.mailing: 3 mailing berichten verwacht")
 print("  - MySQL pending_consumptions: leeg na verwerking")
 print("=" * 60)

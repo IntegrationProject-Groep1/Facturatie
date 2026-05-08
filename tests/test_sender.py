@@ -27,7 +27,7 @@ def parse(xml_str: str) -> ET.Element:
 
 @pytest.fixture
 def notification_xml(monkeypatch):
-    monkeypatch.setenv("BILLING_WEB_URL", "https://portal.yourdomain.com")
+    monkeypatch.setattr("src.services.rabbitmq_sender.BILLING_WEB_URL", "https://portal.yourdomain.com")
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
         return build_invoice_created_notification_xml(
             invoice_id=INVOICE_ID,
@@ -107,11 +107,12 @@ def payment_xml():
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
         return build_payment_confirmed_xml(
             invoice_id=INVOICE_ID,
-            customer_id=CUSTOMER_ID,
+            identity_uuid=CUSTOMER_ID,
             amount="150.00",
             currency="eur",
             payment_method="cash",
             paid_at="2026-05-01T10:00:00Z",
+            payment_context="consumption",
         )
 
 
@@ -137,34 +138,34 @@ def test_payment_no_master_uuid(payment_xml) -> None:
 
 
 def test_payment_invoice_id_in_body(payment_xml) -> None:
-    assert parse(payment_xml).findtext("body/invoice_id") == INVOICE_ID
+    assert parse(payment_xml).findtext("body/invoice/id") == INVOICE_ID
 
 
 def test_payment_customer_id_in_body(payment_xml) -> None:
-    assert parse(payment_xml).findtext("body/customer_id") == CUSTOMER_ID
+    assert parse(payment_xml).findtext("body/identity_uuid") == CUSTOMER_ID
 
 
 def test_payment_amount_and_currency(payment_xml) -> None:
-    amount_el = parse(payment_xml).find("body/amount_paid")
+    amount_el = parse(payment_xml).find("body/invoice/amount_paid")
     assert amount_el is not None
     assert amount_el.text == "150.00"
     assert amount_el.get("currency") == "eur"
 
 
 def test_payment_method(payment_xml) -> None:
-    assert parse(payment_xml).findtext("body/payment_method") == "cash"
+    assert parse(payment_xml).findtext("body/invoice/status") == "paid"
 
 
 def test_payment_non_eur_currency_is_forced_to_eur() -> None:
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
         xml = build_payment_confirmed_xml(
             invoice_id=INVOICE_ID,
-            customer_id=CUSTOMER_ID,
+            identity_uuid=CUSTOMER_ID,
             amount="100.00",
             currency="USD",
             payment_method="card",
         )
-    amount_el = parse(xml).find("body/amount_paid")
+    amount_el = parse(xml).find("body/invoice/amount_paid")
     assert amount_el.get("currency") == "eur"
 
 
@@ -173,7 +174,7 @@ def test_payment_xsd_validation_error_raises() -> None:
         with pytest.raises(ValueError, match="XSD validation failed"):
             build_payment_confirmed_xml(
                 invoice_id=INVOICE_ID,
-                customer_id=CUSTOMER_ID,
+                identity_uuid=CUSTOMER_ID,
                 amount="100.00",
                 currency="eur",
                 payment_method="card",

@@ -25,8 +25,8 @@ from src.services.rabbitmq_sender import send_message
 QUEUE = "facturatie.incoming"
 
 # ── Pas dit aan ───────────────────────────────────────────────────────────────
-INVOICE_ID  = "21"      # ID van een bestaande factuur in FossBilling
-CUSTOMER_ID = "17"   # Klant-ID
+INVOICE_ID  = "10"      # ID van een bestaande factuur in FossBilling
+CUSTOMER_ID = "12345"   # Klant-ID
 REASON      = "Customer requested cancellation"  # Optioneel
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ def build_invoice_cancelled(
         "  </header>\n"
         "  <body>\n"
         f"    <invoice_id>{invoice_id}</invoice_id>\n"
-        f"    <customer_id>{customer_id}</customer_id>"
+        f"    <user_id>{customer_id}</user_id>"
         f"{reason_xml}\n"
         "  </body>\n"
         "</message>"

@@ -6,6 +6,7 @@ import pytest
 import xml.etree.ElementTree as ET
 from src.services.rabbitmq_receiver import is_duplicate
 from src.utils.xml_validator import validate_xml
+import uuid
 
 
 # ── XML builders ─────────────────────────────────────────────────────────────
@@ -28,22 +29,25 @@ def build_invoice_request_xml(
     ET.SubElement(header, "message_id").text = msg_id
     # Volgorde conform XSD: message_id → type → source → timestamp → version → correlation_id
     # master_uuid VERWIJDERD — verboden in alle headers (contract #90)
-    ET.SubElement(header, "type").text = "invoice_request"
-    ET.SubElement(header, "source").text = source
     ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "invoice_request"
     ET.SubElement(header, "version").text = version
     if correlation_id:
         ET.SubElement(header, "correlation_id").text = correlation_id
     else:
-        ET.SubElement(header, "correlation_id").text = "corr-default-001"  # verplicht veld
+        ET.SubElement(header, "correlation_id").text = str(uuid.uuid4())  # verplicht veld
 
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "user_id").text = "BADGE-007"
+    ET.SubElement(body, "identity_uuid").text = str(uuid.uuid4())
 
     invoice_data = ET.SubElement(body, "invoice_data")
-    # Volgorde conform InvoiceDataType XSD: first_name → last_name → email → address → company_name → vat_number
-    ET.SubElement(invoice_data, "first_name").text = "Jan"
-    ET.SubElement(invoice_data, "last_name").text = "De Tester"
+
+    # contact-blok conform InvoiceDataType XSD
+    contact = ET.SubElement(invoice_data, "contact")
+    ET.SubElement(contact, "first_name").text = "Jan"
+    ET.SubElement(contact, "last_name").text = "De Tester"
+
     ET.SubElement(invoice_data, "email").text = "test@example.com"
 
     address = ET.SubElement(invoice_data, "address")
@@ -63,51 +67,44 @@ def build_new_registration_xml(
     msg_id: str = "a1b2c3d4-0000-4000-8000-000000000001",
     version: str = "2.0",
     timestamp: str = "2026-03-30T10:00:00Z",
-    source: str = "frontend",
+    source: str = "crm",
     email: str | None = "info@bedrijf.be",
     is_company_linked: str = "false",
+    correlation_id: str | None = None,
 ) -> str:
-    """
-    Bouwt een new_registration XML conform de nieuwe structuur.
-    Geen master_uuid in header, namen zitten in <contact> wrapper.
-    """
     root = ET.Element("message")
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
-    # master_uuid VERWIJDERD — verboden in alle headers (contract #90)
-    ET.SubElement(header, "version").text = version
-    ET.SubElement(header, "type").text = "new_registration"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "new_registration"
+    ET.SubElement(header, "version").text = version
+    ET.SubElement(header, "correlation_id").text = correlation_id or str(uuid.uuid4())  # verplicht
 
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")
-    ET.SubElement(customer, "customer_id").text = "REG-999"
+    ET.SubElement(customer, "identity_uuid").text = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"  # was: user_id
 
     if email is not None:
         ET.SubElement(customer, "email").text = email
 
-    # Namen zitten in <contact> wrapper (contract Regel 2)
+    ET.SubElement(customer, "date_of_birth").text = "1995-03-21"
+
     contact = ET.SubElement(customer, "contact")
     ET.SubElement(contact, "first_name").text = "Test"
     ET.SubElement(contact, "last_name").text = "User"
 
-    ET.SubElement(customer, "is_company_linked").text = is_company_linked
+    ET.SubElement(customer, "type").text = "company"
+    ET.SubElement(customer, "company_name").text = "Test Bedrijf NV"
+    ET.SubElement(customer, "vat_number").text = "BE0123456789"
+    ET.SubElement(customer, "company_id").text = "comp-001"
+    ET.SubElement(customer, "session_id").text = "sess-001"
 
-    if is_company_linked == "true":
-        ET.SubElement(customer, "company_id").text = "CRM-COMP-888"
-        ET.SubElement(customer, "company_name").text = "Test Bedrijf NV"
-
-    address = ET.SubElement(customer, "address")
-    ET.SubElement(address, "street").text = "Kiekenmarkt"
-    ET.SubElement(address, "number").text = "42"
-    ET.SubElement(address, "postal_code").text = "1000"
-    ET.SubElement(address, "city").text = "Brussel"
-    ET.SubElement(address, "country").text = "be"
-
-    fee_el = ET.SubElement(body, "registration_fee", {"currency": "eur"})
-    fee_el.text = "150.00"
+    payment_due = ET.SubElement(customer, "payment_due")
+    amount_el = ET.SubElement(payment_due, "amount", {"currency": "eur"})
+    amount_el.text = "150.00"
+    ET.SubElement(payment_due, "status").text = "unpaid"
 
     return ET.tostring(root, encoding="unicode")
 
@@ -120,10 +117,10 @@ def build_event_ended_xml(
     root = ET.Element("message")
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "event_ended"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = "frontend"
+    ET.SubElement(header, "type").text = "event_ended"
+    ET.SubElement(header, "version").text = "2.0"
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "session_id").text = session_id
@@ -145,10 +142,9 @@ def test_invalid_vat_rate_returns_error() -> None:
     # invoice_request heeft geen vat_rate meer in de body (items zitten er niet meer in),
     # maar we testen of een bewust kapot bericht correct wordt geweigerd
     root = ET.fromstring(build_invoice_request_xml())
-    # Verwijder verplicht veld om een validatiefout te forceren
     body = root.find("body")
-    user_id = body.find("user_id")
-    body.remove(user_id)
+    identity_uuid = body.find("identity_uuid")
+    body.remove(identity_uuid)
     xml = ET.tostring(root, encoding="unicode")
     is_valid, errors = validate_xml(xml, "invoice_request")
     assert is_valid is False

@@ -35,7 +35,7 @@ def _build_xml_bytes(
     body = ET.SubElement(root, "body")
     if invoice_id:
         ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "customer_id").text = customer_id
+    ET.SubElement(body, "user_id").text = customer_id
     if reason:
         ET.SubElement(body, "reason").text = reason
 
@@ -96,8 +96,7 @@ def test_get_invoice_status_raises_on_connection_error():
 
 def test_cancellation_failed_xml_contains_reason():
     xml_str = build_cancellation_failed_xml(
-        invoice_id="INV-001", customer_id="12345",
-        reason="invoice_already_paid",
+        invoice_id="INV-001", customer_id="12345", reason="invoice_already_paid",
     )
     root = ET.fromstring(xml_str.split("\n", 1)[1])
     assert root.findtext("body/reason") == "invoice_already_paid"
@@ -121,13 +120,13 @@ def test_cancellation_failed_xml_has_invoice_id_in_body():
     assert root.findtext("body/invoice_id") == "INV-001"
 
 
-def test_cancellation_failed_xml_has_customer_id_in_body():
+def test_cancellation_failed_xml_has_user_id_in_body():
     xml_str = build_cancellation_failed_xml(
         invoice_id="INV-001", customer_id="12345",
         reason="invoice_already_paid",
     )
     root = ET.fromstring(xml_str.split("\n", 1)[1])
-    assert root.findtext("body/customer_id") == "12345"
+    assert root.findtext("body/user_id") == "12345"
 
 
 # ── process_message integratie ────────────────────────────────────────────────

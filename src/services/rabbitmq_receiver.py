@@ -19,7 +19,7 @@ from .rabbitmq_sender import (
 )
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
-    get_connection, send_to_dlq
+    get_connection_with_retry, send_to_dlq
 )
 from src.services.rabbitmq_sender import send_log
 from src.services import fossbilling_api as fossbilling_client
@@ -63,20 +63,21 @@ def validate_invoice_cancelled(root: ET.Element) -> list[str]:
 def extract_customer_data(root: ET.Element) -> dict:
     """
     Extracts customer and registration data from a new_registration XML message.
+    Conform gedeeld contract: geen registration_fee, geen address, geen is_company_linked.
     """
-    fee_el = root.find("body/registration_fee")
+    amount_el = root.find("body/customer/payment_due/amount")
     return {
-        "customer_id": root.findtext("body/customer/customer_id") or "",
+        "customer_id": root.findtext("body/customer/user_id") or "",
         "email": root.findtext("body/customer/email"),
         "first_name": root.findtext("body/customer/contact/first_name") or "",
         "last_name": root.findtext("body/customer/contact/last_name") or "",
         "company_name": root.findtext("body/customer/company_name") or "",
+        "company_id": root.findtext("body/customer/company_id") or "",
         "address": {
-            field: root.findtext(f"body/customer/address/{field}") or ""
-            for field in ["street", "number", "postal_code", "city", "country"]
+            "street": "", "number": "", "postal_code": "", "city": "", "country": ""
         },
-        "registration_fee": root.findtext("body/registration_fee"),
-        "fee_currency": fee_el.get("currency", "eur") if fee_el is not None else "eur",
+        "registration_fee": amount_el.text if amount_el is not None else "0.00",
+        "fee_currency": amount_el.get("currency", "eur") if amount_el is not None else "eur",
     }
 
 
@@ -98,6 +99,7 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
         "user_id": root.findtext("body/user_id") or "",
         "correlation_id": root.findtext("header/correlation_id") or "",
         "customer": {
+            "type": root.findtext("body/invoice_data/type") or "private",
             # Namen zitten direct in <invoice_data> — geen <contact> wrapper (§11.1 uitzondering)
             "first_name": root.findtext("body/invoice_data/first_name") or "",
             "last_name": root.findtext("body/invoice_data/last_name") or "",
@@ -136,7 +138,17 @@ def process_message(
 
     # Step 3: validate message structure
     msg_type = root.findtext("header/type") or "unknown"
-    is_valid, error_msg = validate_xml(xml_str, msg_type)
+    source = root.findtext("header/source") or ""
+
+    if msg_type == "payment_registered":
+        if source == "frontend":
+            schema_name = "payment_registered_Frontend"
+        else:
+            schema_name = "payment_registered_CRM"
+    else:
+        schema_name = msg_type
+
+    is_valid, error_msg = validate_xml(xml_str, schema_name)
 
     if not is_valid:
         print(f"[RECEIVER] ERROR: xsd_validation_failed — {error_msg}")
@@ -189,7 +201,7 @@ def process_message(
 
         send_message(
             notification_xml,
-            routing_key="crm.to.mailing",
+            routing_key="facturatie.to.mailing",
             channel=channel
         )
 
@@ -212,10 +224,24 @@ def process_message(
         correlation_id = data["correlation_id"]
         customer = data["customer"]
         company_name = customer["company_name"]
-        if not company_name:
-            send_to_dlq(channel, body, ["ERROR: invoice_request requires company_name in invoice_data"])
-            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-            return
+
+        customer_type = customer.get("type", "private")
+        company_name = customer.get("company_name")
+        vat_number = customer.get("vat_number")
+        first_name = customer.get("first_name", "Onbekend")
+        last_name = customer.get("last_name", "Klant")
+        customer_email = customer.get("email")
+
+        if customer_type == "company":
+            if not company_name:
+                send_to_dlq(channel, body, ["ERROR: invoice_request for company requires company_name"])
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+                return
+
+            if not vat_number:
+                send_to_dlq(channel, body, ["ERROR: invoice_request for company requires vat_number"])
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+                return
 
         try:
             consumption_store.update_meta_by_correlation_id(
@@ -235,7 +261,12 @@ def process_message(
 
             master_uuid = user_id
             invoice_id = fossbilling_client.process_consumption_order(
-                company_id, items, company_name=company_name
+                company_id,
+                items,
+                company_name=company_name,
+                first_name=first_name,
+                last_name=last_name,
+                email=customer_email
             )
 
             consumption_store.clear_by_ids(row_ids)
@@ -250,7 +281,7 @@ def process_message(
                     customer_id=user_id,
                     subject=f"Uw factuur {invoice_id} staat klaar",
                 )
-                send_message(notification_xml, routing_key="crm.to.mailing", channel=channel)
+                send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
             except Exception as mail_err:
                 logging.warning("[RECEIVER] Invoice created but mailing failed: %s", mail_err)
 
@@ -361,7 +392,7 @@ def process_message(
                             customer_id=meta.get("customer_id", ""),
                             subject=f"Uw factuur {invoice_id} staat klaar",
                         )
-                        send_message(notification_xml, routing_key="crm.to.mailing", channel=channel)
+                        send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
                     except Exception as mail_err:
                         logging.warning("[RECEIVER] Invoice created but mail failed for %s: %s", company_id, mail_err)
 
@@ -479,7 +510,7 @@ def process_message(
             return
 
         invoice_id = root.findtext("body/invoice_id")
-        customer_id = root.findtext("body/customer_id") or ""
+        customer_id = root.findtext("body/user_id") or ""
         correlation_id = root.findtext("header/message_id")
 
         if not invoice_id:
@@ -555,21 +586,34 @@ def start_receiver(queue: str | None = None) -> None:
 
     consumption_store.init_db()
 
-    connection = get_connection()
-    channel = connection.channel()
+    print(f"[RECEIVER] Starting — will listen on queue '{queue}'")
 
-    channel.queue_declare(queue=queue, passive=False, durable=True)
-    channel.basic_qos(prefetch_count=1)
-    channel.basic_consume(queue=queue, on_message_callback=process_message)
+    while True:
+        connection = None
+        try:
+            connection = get_connection_with_retry(max_attempts=5)
+            channel = connection.channel()
 
-    print(f"[RECEIVER] Listening on queue '{queue}'... (CTRL+C to stop)")
+            channel.queue_declare(queue=queue, passive=False, durable=True)
+            channel.basic_qos(prefetch_count=1)
+            channel.basic_consume(queue=queue, on_message_callback=process_message)
 
-    try:
-        channel.start_consuming()
-    except KeyboardInterrupt:
-        print("\n[RECEIVER] Stopping consumer...")
-    finally:
-        connection.close()
+            print(f"[RECEIVER] Listening on queue '{queue}'... (CTRL+C to stop)")
+            channel.start_consuming()
+
+        except KeyboardInterrupt:
+            print("\n[RECEIVER] Stopping consumer...")
+            break
+
+        except Exception as e:
+            logging.error("[RECEIVER] Connection lost: %s — reconnecting...", e)
+
+        finally:
+            try:
+                if connection and connection.is_open:
+                    connection.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
