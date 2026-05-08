@@ -35,10 +35,10 @@ def build_consumption_order_xml(
     # Build header
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "consumption_order"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "consumption_order"
+    ET.SubElement(header, "version").text = "2.0"
 
     # Build body — customer
     body = ET.SubElement(root, "body")
@@ -279,13 +279,13 @@ def build_invoice_link_xml(
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "invoice_available"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
-    ET.SubElement(header, "master_uuid").text = master_uuid
+    ET.SubElement(header, "type").text = "invoice_available"
+    ET.SubElement(header, "version").text = "2.0"
 
     body = ET.SubElement(root, "body")
+    ET.SubElement(body, "identity_uuid").text = master_uuid
     ET.SubElement(body, "invoice_id").text = invoice_id
     ET.SubElement(body, "pdf_url").text = pdf_url
 
@@ -295,9 +295,9 @@ def build_invoice_link_xml(
         + ET.tostring(root, encoding="unicode")
     )
 
-    is_valid, error_msg = validate_xml(xml_str, "invoice_link")
+    is_valid, error_msg = validate_xml(xml_str, "invoice_available")
     if not is_valid:
-        raise ValueError(f"[SENDER] invoice_link XSD validation failed: {error_msg}")
+        raise ValueError(f"[SENDER] invoice_available XSD validation failed: {error_msg}")
 
     return xml_str
 
