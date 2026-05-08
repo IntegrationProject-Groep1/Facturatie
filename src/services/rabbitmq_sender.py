@@ -189,6 +189,7 @@ def build_payment_confirmed_xml(
     payment_method: str,
     paid_at: str | None = None,
     source: str = "facturatie",
+    payment_context: str = "consumption",
 ) -> str:
     """
     Builds a payment_registered confirmation XML to publish after a successful
@@ -220,13 +221,16 @@ def build_payment_confirmed_xml(
     ET.SubElement(header, "version").text = "2.0"
 
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "user_id").text = customer_id
-    amount_el = ET.SubElement(body, "amount_paid")
+    ET.SubElement(body, "identity_uuid").text = customer_id
+
+    invoice = ET.SubElement(body, "invoice")
+    ET.SubElement(invoice, "id").text = invoice_id
+    amount_el = ET.SubElement(invoice, "amount_paid")
     amount_el.text = amount
     amount_el.set("currency", currency_lower)
-    ET.SubElement(body, "payment_method").text = payment_method
-    ET.SubElement(body, "paid_at").text = paid_at
+    ET.SubElement(invoice, "status").text = "paid"
+
+    ET.SubElement(body, "payment_context").text = "consumption"
 
     ET.indent(root, space="    ")
     xml_str = (

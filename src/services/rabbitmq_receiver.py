@@ -138,7 +138,17 @@ def process_message(
 
     # Step 3: validate message structure
     msg_type = root.findtext("header/type") or "unknown"
-    is_valid, error_msg = validate_xml(xml_str, msg_type)
+    source = root.findtext("header/source") or ""
+
+    if msg_type == "payment_registered":
+        if source == "frontend":
+            schema_name = "payment_registered_Frontend"
+        else:
+            schema_name = "payment_registered_CRM"
+    else:
+        schema_name = msg_type
+
+    is_valid, error_msg = validate_xml(xml_str, schema_name)
 
     if not is_valid:
         print(f"[RECEIVER] ERROR: xsd_validation_failed — {error_msg}")
