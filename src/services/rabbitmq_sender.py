@@ -183,18 +183,22 @@ def build_invoice_created_notification_xml(
 
 def build_payment_confirmed_xml(
     invoice_id: str,
-    customer_id: str,
+    identity_uuid: str,
     amount: str,
     currency: str,
     payment_method: str,
     paid_at: str | None = None,
     source: str = "facturatie",
+    status: str = "paid",
+    due_date: str = "",
+    transaction_id: str = "",
+    payment_context: str = "online_invoice"
 ) -> str:
     """
     Builds a payment_registered confirmation XML to publish after a successful
     payment has been processed in FossBilling.
-    Sent to queue: facturatie.to.crm
-    and payement_registered_outgoing.xsd.
+    Conforms to the standard v2.0 message format (§8.2).
+    Sent to queue: crm.incoming
     """
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -220,13 +224,22 @@ def build_payment_confirmed_xml(
     ET.SubElement(header, "version").text = "2.0"
 
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "customer_id").text = customer_id
-    amount_el = ET.SubElement(body, "amount_paid")
+    ET.SubElement(body, "identity_uuid").text = identity_uuid
+
+    invoice = ET.SubElement(body, "invoice")
+    ET.SubElement(invoice, "id").text = invoice_id
+    amount_el = ET.SubElement(invoice, "amount_paid")
     amount_el.text = amount
     amount_el.set("currency", currency_lower)
-    ET.SubElement(body, "payment_method").text = payment_method
-    ET.SubElement(body, "paid_at").text = paid_at
+    ET.SubElement(invoice, "status").text = status
+    ET.SubElement(invoice, "due_date").text = due_date
+
+    ET.SubElement(body, "payment_context").text = payment_context
+
+    transaction = ET.SubElement(body, "transaction")
+    ET.SubElement(transaction, "id").text = transaction_id or str(uuid.uuid4())
+    ET.SubElement(transaction, "payment_method").text = payment_method
+    ET.SubElement(transaction, "timestamp").text = paid_at
 
     ET.indent(root, space="    ")
     xml_str = (
@@ -235,16 +248,16 @@ def build_payment_confirmed_xml(
     )
 
     # Validate against XSD before sending
-    is_valid, error_msg = validate_xml(xml_str, "payment_registered_outgoing")
+    is_valid, error_msg = validate_xml(xml_str, "payment_registered")
     if not is_valid:
         raise ValueError(
-            f"[SENDER] payment_registered (outgoing) XSD validation failed: {error_msg}"
+            f"[SENDER] payment_registered XSD validation failed: {error_msg}"
         )
 
     return xml_str
 
 
-CRM_QUEUE = os.getenv("QUEUE_CRM", "facturatie.to.crm")
+CRM_QUEUE = os.getenv("QUEUE_CRM", "crm.incoming")
 FRONTEND_QUEUE = os.getenv("QUEUE_FRONTEND", "facturatie.to.frontend")
 
 
