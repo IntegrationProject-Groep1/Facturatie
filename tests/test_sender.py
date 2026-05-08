@@ -107,7 +107,7 @@ def payment_xml():
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
         return build_payment_confirmed_xml(
             invoice_id=INVOICE_ID,
-            customer_id=CUSTOMER_ID,
+            identity_uuid=CUSTOMER_ID,
             amount="150.00",
             currency="eur",
             payment_method="cash",
@@ -160,7 +160,7 @@ def test_payment_non_eur_currency_is_forced_to_eur() -> None:
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
         xml = build_payment_confirmed_xml(
             invoice_id=INVOICE_ID,
-            customer_id=CUSTOMER_ID,
+            identity_uuid=CUSTOMER_ID,
             amount="100.00",
             currency="USD",
             payment_method="card",
@@ -174,7 +174,7 @@ def test_payment_xsd_validation_error_raises() -> None:
         with pytest.raises(ValueError, match="XSD validation failed"):
             build_payment_confirmed_xml(
                 invoice_id=INVOICE_ID,
-                customer_id=CUSTOMER_ID,
+                identity_uuid=CUSTOMER_ID,
                 amount="100.00",
                 currency="eur",
                 payment_method="card",
