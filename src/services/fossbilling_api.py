@@ -137,7 +137,10 @@ def create_registration_invoice(customer_data: dict) -> str:
         try:
             client_id = _get_or_create_client(customer_data)
             invoice_id = _create_invoice(client_id, items)
-            logging.info("[FOSSBILLING] Invoice created | invoice_id=%s | attempt=%d/%d", invoice_id, attempt, MAX_RETRIES)
+            logging.info(
+                "[FOSSBILLING] Invoice created | invoice_id=%s | attempt=%d/%d",
+                invoice_id, attempt, MAX_RETRIES
+            )
             return invoice_id
         except Exception as e:
             last_error = e

@@ -68,7 +68,7 @@ def test_unparseable_xml_is_still_acked():
     channel.basic_nack.assert_not_called()
 
 
-def test_errors_header_is_read(capsys):
+def test_errors_header_is_read(caplog):
     """The rejection reason from the errors header must appear in the output."""
     channel = _make_channel()
     method = _make_method()
@@ -78,11 +78,10 @@ def test_errors_header_is_read(capsys):
 
     process_dlq_message(channel, method, props, body)
 
-    captured = capsys.readouterr()
-    assert error_text in captured.out
+    assert error_text in caplog.text
 
 
-def test_message_fields_logged(capsys):
+def test_message_fields_logged(caplog):
     """message_id and correlation_id extracted from XML must appear in the log."""
     channel = _make_channel()
     method = _make_method()
@@ -91,12 +90,11 @@ def test_message_fields_logged(capsys):
 
     process_dlq_message(channel, method, props, body)
 
-    captured = capsys.readouterr()
-    assert "msg-123" in captured.out
-    assert "corr-456" in captured.out
+    assert "msg-123" in caplog.text
+    assert "corr-456" in caplog.text
 
 
-def test_message_type_logged(capsys):
+def test_message_type_logged(caplog):
     """The message type extracted from XML must appear in the log."""
     channel = _make_channel()
     method = _make_method()
@@ -105,11 +103,10 @@ def test_message_type_logged(capsys):
 
     process_dlq_message(channel, method, props, body)
 
-    captured = capsys.readouterr()
-    assert "payment_registered" in captured.out
+    assert "payment_registered" in caplog.text
 
 
-def test_x_death_original_queue_logged(capsys):
+def test_x_death_original_queue_logged(caplog):
     """When x-death metadata is present, the original queue name must be logged."""
     channel = _make_channel()
     method = _make_method()
@@ -119,8 +116,7 @@ def test_x_death_original_queue_logged(capsys):
 
     process_dlq_message(channel, method, props, body)
 
-    captured = capsys.readouterr()
-    assert "crm.to.facturatie" in captured.out
+    assert "crm.to.facturatie" in caplog.text
 
 
 def test_no_headers_does_not_crash():
@@ -136,8 +132,8 @@ def test_no_headers_does_not_crash():
     channel.basic_ack.assert_called_once_with(delivery_tag=1)
 
 
-def test_alert_line_present(capsys):
-    """An [ALERT][DLQ] line must always be printed for monitoring."""
+def test_alert_line_present(caplog):
+    """An [ALERT][DLQ] line must always be logged for monitoring."""
     channel = _make_channel()
     method = _make_method()
     props = _make_properties(errors="ERROR: something")
@@ -145,5 +141,4 @@ def test_alert_line_present(capsys):
 
     process_dlq_message(channel, method, props, body)
 
-    captured = capsys.readouterr()
-    assert "[ALERT][DLQ]" in captured.out
+    assert "[ALERT][DLQ]" in caplog.text

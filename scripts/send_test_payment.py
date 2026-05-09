@@ -23,9 +23,9 @@ from src.services.rabbitmq_sender import send_message
 QUEUE = "facturatie.incoming"
 
 # ── Pas dit aan ───────────────────────────────────────────────────────────────
-INVOICE_ID = "14"          # ID van een bestaande factuur in FossBilling
-AMOUNT     = "150.00"      # Bedrag dat betaald wordt
-USER_ID    = str(uuid.uuid4())  # Optioneel — klant-ID
+INVOICE_ID     = "14"               # ID van een bestaande factuur in FossBilling
+AMOUNT         = "150.00"           # Bedrag dat betaald wordt
+IDENTITY_UUID  = str(uuid.uuid4())  # Optioneel — klant UUID (laat leeg voor anoniem)
 # ─────────────────────────────────────────────────────────────────────────────
 
 PAYMENT_METHOD = "on_site"   # on_site | online | company_link
@@ -38,7 +38,7 @@ def ts() -> str:
 def build_payment_registered(
     invoice_id: str,
     amount: str,
-    user_id: str,
+    identity_uuid: str,
     payment_method: str,
 ) -> str:
     msg_id = str(uuid.uuid4())
@@ -56,14 +56,14 @@ def build_payment_registered(
         "    <version>2.0</version>\n"
         "  </header>\n"
         "  <body>\n"
-        "    <payment_context>consumption</payment_context>\n"
-        f"    <user_id>{user_id}</user_id>\n"
+        f"    <identity_uuid>{identity_uuid}</identity_uuid>\n"
         "    <invoice>\n"
         f"      <id>{invoice_id}</id>\n"
-        "      <status>paid</status>\n"
         f"      <amount_paid currency=\"eur\">{amount}</amount_paid>\n"
+        "      <status>paid</status>\n"
         f"      <due_date>{due_date}</due_date>\n"
         "    </invoice>\n"
+        "    <payment_context>consumption</payment_context>\n"
         "    <transaction>\n"
         f"      <id>{transaction_id}</id>\n"
         f"      <payment_method>{payment_method}</payment_method>\n"
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     xml = build_payment_registered(
         invoice_id=INVOICE_ID,
         amount=AMOUNT,
-        user_id=USER_ID,
+        identity_uuid=IDENTITY_UUID,
         payment_method=PAYMENT_METHOD,
     )
 

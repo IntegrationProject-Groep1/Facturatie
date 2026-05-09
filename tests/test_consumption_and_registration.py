@@ -50,6 +50,7 @@ def _build_invoice_request_xml(
     company_name: str = "Bedrijf NV",
     correlation_id: str = "corr-001",
     customer_type: str = "private",
+    vat_number: str = "BE0123456789",
 ) -> bytes:
     """
     Bouwt een invoice_request XML conform de nieuwe structuur (contract §11.1).
@@ -73,11 +74,10 @@ def _build_invoice_request_xml(
 
     invoice_data = ET.SubElement(body, "invoice_data")
 
-    ET.SubElement(invoice_data, "type").text = customer_type
-    # Volgorde conform InvoiceDataType XSD: first_name → last_name → email → address → company_name → vat_number
-    ET.SubElement(invoice_data, "first_name").text = "Test"
-    ET.SubElement(invoice_data, "last_name").text = "User"
-    ET.SubElement(invoice_data, "email").text = "info@bedrijf.be"
+    contact = ET.SubElement(invoice_data, "contact")
+    ET.SubElement(contact, "first_name").text = "Test"
+    ET.SubElement(contact, "last_name").text = "User"
+    ET.SubElement(contact, "email").text = "info@bedrijf.be"
 
     address = ET.SubElement(invoice_data, "address")
     ET.SubElement(address, "street").text = "Teststraat"
@@ -91,7 +91,7 @@ def _build_invoice_request_xml(
     else:
         ET.SubElement(invoice_data, "company_name").text = ""
 
-    ET.SubElement(invoice_data, "vat_number").text = "BE0123456789"
+    ET.SubElement(invoice_data, "vat_number").text = vat_number
 
     ET.indent(root, space="    ")
     return (
@@ -353,12 +353,12 @@ class TestProcessMessageInvoiceRequest:
         assert "corr-xyz" in args
 
     def test_missing_company_name_sends_to_dlq(self):
-        """invoice_request zonder company_name → DLQ (Facturatie vereist bedrijfsklant)."""
+        """invoice_request met company_name maar zonder vat_number → DLQ."""
         channel = MagicMock()
         body = _build_invoice_request_xml(
             msg_id="11111111-1111-4111-1111-111111111113",
-            company_name="",
-            customer_type="company"
+            company_name="Bedrijf NV",
+            vat_number="",
         )
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
