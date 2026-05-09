@@ -225,7 +225,7 @@ def process_message(
             correlation_id=msg_id,
             first_name=customer_data.get("first_name", ""),
             last_name=customer_data.get("last_name", ""),
-            customer_id=customer_data.get("customer_id", ""),
+            identity_uuid=master_uuid,
         )
 
         send_message(
@@ -308,7 +308,7 @@ def process_message(
                     correlation_id=msg_id,
                     first_name=customer.get("first_name", ""),
                     last_name=customer.get("last_name", ""),
-                    customer_id=user_id,
+                    identity_uuid=master_uuid,
                     subject=f"Uw factuur {invoice_id} staat klaar",
                 )
                 send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
@@ -419,7 +419,7 @@ def process_message(
                             correlation_id=msg_id,
                             first_name=meta.get("first_name", ""),
                             last_name=meta.get("last_name", ""),
-                            customer_id=meta.get("customer_id", ""),
+                            identity_uuid=meta.get("master_uuid", ""),
                             subject=f"Uw factuur {invoice_id} staat klaar",
                         )
                         send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
