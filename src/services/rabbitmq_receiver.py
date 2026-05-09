@@ -100,7 +100,8 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
         "user_id": root.findtext("body/identity_uuid") or "",
         "correlation_id": root.findtext("header/correlation_id") or "",
         "customer": {
-            "type": "company" if root.findtext("body/invoice_data/company_name") else "private",
+            "type": root.findtext("body/invoice_data/type")
+            or ("company" if root.findtext("body/invoice_data/company_name") else "private"),
             "first_name": root.findtext("body/invoice_data/contact/first_name") or "",
             "last_name": root.findtext("body/invoice_data/contact/last_name") or "",
             "email": root.findtext("body/invoice_data/email") or "",
@@ -227,7 +228,7 @@ def process_message(
             correlation_id=msg_id,
             first_name=customer_data.get("first_name", ""),
             last_name=customer_data.get("last_name", ""),
-            customer_id=customer_data.get("customer_id", ""),
+            identity_uuid=master_uuid,
         )
 
         send_message(
@@ -310,7 +311,7 @@ def process_message(
                     correlation_id=msg_id,
                     first_name=customer.get("first_name", ""),
                     last_name=customer.get("last_name", ""),
-                    customer_id=user_id,
+                    identity_uuid=master_uuid,
                     subject=f"Uw factuur {invoice_id} staat klaar",
                 )
                 send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
@@ -421,7 +422,7 @@ def process_message(
                             correlation_id=msg_id,
                             first_name=meta.get("first_name", ""),
                             last_name=meta.get("last_name", ""),
-                            customer_id=meta.get("customer_id", ""),
+                            identity_uuid=meta.get("master_uuid", ""),
                             subject=f"Uw factuur {invoice_id} staat klaar",
                         )
                         send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)

@@ -352,7 +352,7 @@ class TestProcessMessageInvoiceRequest:
         args = str(mock_get.call_args)
         assert "corr-xyz" in args
 
-    def test_missing_company_name_sends_to_dlq(self):
+    def test_missing_vat_number_sends_to_dlq(self):
         """invoice_request met company_name maar zonder vat_number → DLQ."""
         channel = MagicMock()
         body = _build_invoice_request_xml(

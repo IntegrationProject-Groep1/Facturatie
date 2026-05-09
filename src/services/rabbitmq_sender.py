@@ -162,6 +162,7 @@ def build_invoice_created_notification_xml(
     first_name: str = "",
     last_name: str = "",
     customer_id: str = "",
+    identity_uuid: str = "",
     subject: str = "Uw factuur staat klaar",
     source: str = "facturatie",
 ) -> str:
@@ -189,13 +190,12 @@ def build_invoice_created_notification_xml(
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "campaign_id").text = f"foss-invoice-{invoice_id}"
     ET.SubElement(body, "subject").text = subject
-    ET.SubElement(body, "template_id").text = "tmpl-invoice-ready"
     ET.SubElement(body, "mail_type").text = "invoice_ready"
 
     recipients = ET.SubElement(body, "recipients")
     recipient = ET.SubElement(recipients, "recipient")
     ET.SubElement(recipient, "email").text = recipient_email
-    ET.SubElement(recipient, "user_id").text = customer_id or invoice_id
+    ET.SubElement(recipient, "identity_uuid").text = identity_uuid or customer_id
     contact = ET.SubElement(recipient, "contact")
     ET.SubElement(contact, "first_name").text = first_name
     ET.SubElement(contact, "last_name").text = last_name
