@@ -343,7 +343,7 @@ def process_message(
 
     elif msg_type == "consumption_order":
         customer_id = root.findtext("body/customer/id") or ""
-        user_id = root.findtext("body/customer/user_id") or ""
+        user_id = root.findtext("body/customer/identity_uuid") or ""
         email = root.findtext("body/customer/email") or ""
 
         item_elements = root.findall("body/items/item")
