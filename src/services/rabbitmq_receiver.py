@@ -97,13 +97,12 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
             }
 
     return {
-        "user_id": root.findtext("body/user_id") or "",
+        "user_id": root.findtext("body/identity_uuid") or "",
         "correlation_id": root.findtext("header/correlation_id") or "",
         "customer": {
             "type": root.findtext("body/invoice_data/type") or "private",
-            # Namen zitten direct in <invoice_data> — geen <contact> wrapper (§11.1 uitzondering)
-            "first_name": root.findtext("body/invoice_data/first_name") or "",
-            "last_name": root.findtext("body/invoice_data/last_name") or "",
+            "first_name": root.findtext("body/invoice_data/contact/first_name") or "",
+            "last_name": root.findtext("body/invoice_data/contact/last_name") or "",
             "email": root.findtext("body/invoice_data/email") or "",
             "company_name": root.findtext("body/invoice_data/company_name") or "",
             "vat_number": root.findtext("body/invoice_data/vat_number") or "",
