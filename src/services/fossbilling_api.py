@@ -325,3 +325,42 @@ def cancel_invoice(invoice_id: str) -> bool:
     except Exception as e:
         logging.error("[FOSSBILLING] ERROR: Failed to cancel invoice '%s': %s", invoice_id, e)
         return False
+
+
+def update_client_by_identity_uuid(
+    identity_uuid: str,
+    email: str,
+    first_name: str,
+    last_name: str,
+    company_name: str = "",
+    vat_number: str = "",
+) -> bool:
+    """Updates a client in FossBilling based on their email (via identity_uuid lookup).
+    Returns True on success, False if client not found or update fails.
+    """
+    try:
+        client_id = _get_client_by_email(email)
+        if client_id is None:
+            logging.warning(
+                "[FOSSBILLING] profile_update: client not found for email=%s | identity_uuid=%s",
+                email, identity_uuid
+            )
+            return False
+
+        customer_data = {
+            "email": email,
+            "first_name": first_name,
+            "last_name": last_name,
+            "company_name": company_name,
+            "address": {},
+        }
+        update_client(client_id, customer_data)
+        logging.info(
+            "[FOSSBILLING] Client profile updated | client_id=%s | identity_uuid=%s",
+            client_id, identity_uuid
+        )
+        return True
+
+    except Exception as e:
+        logging.error("[FOSSBILLING] ERROR: profile_update failed for identity_uuid=%s: %s", identity_uuid, e)
+        return False
