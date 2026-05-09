@@ -120,7 +120,7 @@ def send_message(
         temp_root = ET.fromstring(xml_message)
         msg_type = temp_root.findtext("header/type") or "unknown"
         corr_id = temp_root.findtext("header/correlation_id") or temp_root.findtext("header/message_id") or "N/A"
-        
+
         # Mapping message types to protocol actions
         action_map = {
             "invoice_available": "invoice",
@@ -131,7 +131,7 @@ def send_message(
             "heartbeat": "session"
         }
         log_action = action_map.get(msg_type, "invoice")
-        
+
         send_log(
             level="info",
             action=log_action,
