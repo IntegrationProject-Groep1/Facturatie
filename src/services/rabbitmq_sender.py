@@ -115,31 +115,36 @@ def send_message(
     logging.info("[SENDER] Message sent to queue '%s'", routing_key)
 
     # PROTOCOL: Outbound Message (The "Tracker" Log)
-    # We parse the message to get the type and correlation_id for the log message
-    try:
-        temp_root = ET.fromstring(xml_message)
-        msg_type = temp_root.findtext("header/type") or "unknown"
-        corr_id = temp_root.findtext("header/correlation_id") or temp_root.findtext("header/message_id") or "N/A"
-        
-        # Mapping message types to protocol actions
-        action_map = {
-            "invoice_available": "invoice",
-            "invoice_cancelled": "invoice",
-            "payment_registered": "payment",
-            "send_mailing": "email",
-            "system_error": "system_error",
-            "heartbeat": "session"
-        }
-        log_action = action_map.get(msg_type, "invoice")
-        
-        send_log(
-            level="info",
-            action=log_action,
-            message=f"Published {msg_type} to {routing_key}. CorrelationID: {corr_id}",
-            channel=channel
-        )
-    except Exception as log_err:
-        logging.warning("[SENDER] Metadata extraction for Tracker log failed: %s", log_err)
+    # Skip internal monitoring queues to avoid infinite recursion.
+    _INTERNAL_QUEUES = {"logs", "heartbeat", "errors.facturatie"}
+    if routing_key not in _INTERNAL_QUEUES:
+        try:
+            temp_root = ET.fromstring(xml_message)
+            msg_type = temp_root.findtext("header/type") or "unknown"
+            corr_id = (
+                temp_root.findtext("header/correlation_id")
+                or temp_root.findtext("header/message_id")
+                or "N/A"
+            )
+
+            action_map = {
+                "invoice_available": "invoice",
+                "invoice_cancelled": "invoice",
+                "payment_registered": "payment",
+                "send_mailing": "email",
+                "system_error": "system_error",
+                "heartbeat": "session"
+            }
+            log_action = action_map.get(msg_type, "invoice")
+
+            send_log(
+                level="info",
+                action=log_action,
+                message=f"Published {msg_type} to {routing_key}. CorrelationID: {corr_id}",
+                channel=channel
+            )
+        except Exception as log_err:
+            logging.warning("[SENDER] Metadata extraction for Tracker log failed: %s", log_err)
 
     # Only close if we opened the connection here
     if connection is not None:
@@ -153,6 +158,7 @@ def build_invoice_created_notification_xml(
     first_name: str = "",
     last_name: str = "",
     customer_id: str = "",
+    identity_uuid: str = "",
     subject: str = "Uw factuur staat klaar",
     source: str = "facturatie",
 ) -> str:
@@ -180,13 +186,12 @@ def build_invoice_created_notification_xml(
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "campaign_id").text = f"foss-invoice-{invoice_id}"
     ET.SubElement(body, "subject").text = subject
-    ET.SubElement(body, "template_id").text = "tmpl-invoice-ready"
     ET.SubElement(body, "mail_type").text = "invoice_ready"
 
     recipients = ET.SubElement(body, "recipients")
     recipient = ET.SubElement(recipients, "recipient")
     ET.SubElement(recipient, "email").text = recipient_email
-    ET.SubElement(recipient, "user_id").text = customer_id or invoice_id
+    ET.SubElement(recipient, "identity_uuid").text = identity_uuid or customer_id
     contact = ET.SubElement(recipient, "contact")
     ET.SubElement(contact, "first_name").text = first_name
     ET.SubElement(contact, "last_name").text = last_name

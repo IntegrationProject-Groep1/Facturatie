@@ -97,13 +97,13 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
             }
 
     return {
-        "user_id": root.findtext("body/user_id") or "",
+        "user_id": root.findtext("body/identity_uuid") or "",
         "correlation_id": root.findtext("header/correlation_id") or "",
         "customer": {
-            "type": root.findtext("body/invoice_data/type") or "private",
-            # Namen zitten direct in <invoice_data> — geen <contact> wrapper (§11.1 uitzondering)
-            "first_name": root.findtext("body/invoice_data/first_name") or "",
-            "last_name": root.findtext("body/invoice_data/last_name") or "",
+            "type": root.findtext("body/invoice_data/type")
+            or ("company" if root.findtext("body/invoice_data/company_name") else "private"),
+            "first_name": root.findtext("body/invoice_data/contact/first_name") or "",
+            "last_name": root.findtext("body/invoice_data/contact/last_name") or "",
             "email": root.findtext("body/invoice_data/email") or "",
             "company_name": root.findtext("body/invoice_data/company_name") or "",
             "vat_number": root.findtext("body/invoice_data/vat_number") or "",
@@ -201,7 +201,10 @@ def process_message(
         # Request master UUID from identity-service
         try:
             master_uuid = request_master_uuid(customer_data["email"])
-            logging.info("[RECEIVER] master_uuid received | email=%s | master_uuid=%s", customer_data['email'], master_uuid)
+            logging.info(
+                "[RECEIVER] master_uuid received | email=%s | master_uuid=%s",
+                customer_data['email'], master_uuid
+            )
         except Exception as e:
             logging.error("[RECEIVER] master_uuid request failed: %s", e)
             send_to_dlq(channel, body, [f"ERROR: identity_service_failed: {e}"])
@@ -225,7 +228,7 @@ def process_message(
             correlation_id=msg_id,
             first_name=customer_data.get("first_name", ""),
             last_name=customer_data.get("last_name", ""),
-            customer_id=customer_data.get("customer_id", ""),
+            identity_uuid=master_uuid,
         )
 
         send_message(
@@ -308,7 +311,7 @@ def process_message(
                     correlation_id=msg_id,
                     first_name=customer.get("first_name", ""),
                     last_name=customer.get("last_name", ""),
-                    customer_id=user_id,
+                    identity_uuid=master_uuid,
                     subject=f"Uw factuur {invoice_id} staat klaar",
                 )
                 send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
@@ -343,7 +346,7 @@ def process_message(
 
     elif msg_type == "consumption_order":
         customer_id = root.findtext("body/customer/id") or ""
-        user_id = root.findtext("body/customer/user_id") or ""
+        user_id = root.findtext("body/customer/identity_uuid") or ""
         email = root.findtext("body/customer/email") or ""
 
         item_elements = root.findall("body/items/item")
@@ -419,7 +422,7 @@ def process_message(
                             correlation_id=msg_id,
                             first_name=meta.get("first_name", ""),
                             last_name=meta.get("last_name", ""),
-                            customer_id=meta.get("customer_id", ""),
+                            identity_uuid=meta.get("master_uuid", ""),
                             subject=f"Uw factuur {invoice_id} staat klaar",
                         )
                         send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
@@ -478,13 +481,7 @@ def process_message(
             payment_method = transaction_el.findtext("payment_method") or ""
             transaction_id = transaction_el.findtext("id") or ""
 
-            # Inkomende waarden (Kassa) mappen naar outgoing waarden (contract §8.2)
-            payment_method_map = {
-                "on_site":      "cash",
-                "online":       "card",
-                "company_link": "bank_transfer",
-            }
-            payment_method_out = payment_method_map.get(payment_method, "cash")
+            payment_method_out = payment_method
 
             identity_uuid = root.findtext("body/identity_uuid") or root.findtext("body/user_id") or ""
 

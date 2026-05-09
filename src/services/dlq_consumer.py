@@ -8,7 +8,7 @@ import pika.spec
 from dotenv import load_dotenv
 
 from src.services.rabbitmq_utils import get_connection
-from src.services.rabbitmq_sender import send_log, send_system_error
+from src.services.rabbitmq_sender import send_log
 
 load_dotenv()
 
