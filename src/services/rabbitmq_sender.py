@@ -79,10 +79,15 @@ def build_consumption_order_xml(
     )
 
 
+_INTERNAL_QUEUES = {"logs", "heartbeat", "errors.facturatie"}
+
+
 def send_message(
     xml_message: str,
     routing_key: str | None = None,
     channel: pika.channel.Channel | None = None,
+    msg_type: str | None = None,
+    corr_id: str | None = None,
 ) -> None:
     """
     Publishes an XML message to a RabbitMQ queue.
@@ -116,7 +121,6 @@ def send_message(
 
     # PROTOCOL: Outbound Message (The "Tracker" Log)
     # Skip internal monitoring queues to avoid infinite recursion.
-    _INTERNAL_QUEUES = {"logs", "heartbeat", "errors.facturatie"}
     if routing_key not in _INTERNAL_QUEUES:
         try:
             temp_root = ET.fromstring(xml_message)

@@ -74,11 +74,10 @@ def _build_invoice_request_xml(
 
     invoice_data = ET.SubElement(body, "invoice_data")
 
-    ET.SubElement(invoice_data, "type").text = customer_type
-    # Volgorde conform InvoiceDataType XSD: first_name → last_name → email → address → company_name → vat_number
-    ET.SubElement(invoice_data, "first_name").text = "Test"
-    ET.SubElement(invoice_data, "last_name").text = "User"
-    ET.SubElement(invoice_data, "email").text = "info@bedrijf.be"
+    contact = ET.SubElement(invoice_data, "contact")
+    ET.SubElement(contact, "first_name").text = "Test"
+    ET.SubElement(contact, "last_name").text = "User"
+    ET.SubElement(contact, "email").text = "info@bedrijf.be"
 
     address = ET.SubElement(invoice_data, "address")
     ET.SubElement(address, "street").text = "Teststraat"
