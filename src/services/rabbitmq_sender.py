@@ -52,7 +52,7 @@ def build_consumption_order_xml(
     ET.SubElement(customer, "identity_uuid").text = identity_uuid
     ET.SubElement(customer, "type").text = "company" if is_company_linked else "private"
     ET.SubElement(customer, "email").text = "test@example.com"
-    
+
     addr = ET.SubElement(customer, "address")
     ET.SubElement(addr, "street").text = "Main St"
     ET.SubElement(addr, "number").text = "1"
@@ -68,14 +68,14 @@ def build_consumption_order_xml(
         ET.SubElement(item_el, "sku").text = str(item.get("sku", "SKU-DEFAULT"))
         ET.SubElement(item_el, "description").text = str(item.get("description", "Consumption"))
         ET.SubElement(item_el, "quantity").text = str(item.get("quantity", 1))
-        
+
         unit_price = float(item.get("unit_price", 10.0))
         unit_price_el = ET.SubElement(item_el, "unit_price")
         unit_price_el.text = f"{unit_price:.2f}"
         unit_price_el.set("currency", "eur")
-        
+
         ET.SubElement(item_el, "vat_rate").text = str(item.get("vat_rate", 21))
-        
+
         qty = int(item.get("quantity", 1))
         total_amount_el = ET.SubElement(item_el, "total_amount")
         total_amount_el.text = f"{(unit_price * qty):.2f}"
@@ -311,7 +311,7 @@ def build_payment_confirmed_xml(
             transaction.find("payment_method").text = "online"
             xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")
             is_valid, error_msg = validate_xml(xml_str, "payment_registered")
-        
+
         if not is_valid:
             raise ValueError(
                 f"[SENDER] payment_registered XSD validation failed: {error_msg}"
