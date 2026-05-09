@@ -38,7 +38,7 @@ def ts() -> str:
 def build_consumption_order(
     message_id: str,
     customer_id: str,
-    user_id: str,
+    identity_uuid: str,
     email: str,
     items: list[dict],
     customer_type: str = "company",
@@ -62,16 +62,16 @@ def build_consumption_order(
         "<message>\n"
         "  <header>\n"
         f"    <message_id>{message_id}</message_id>\n"
-        "    <type>consumption_order</type>\n"
-        f"    <source>crm</source>\n"
         f"    <timestamp>{ts()}</timestamp>\n"
+        "    <source>kassa</source>\n"
+        "    <type>consumption_order</type>\n"
         "    <version>2.0</version>\n"
         "  </header>\n"
         "  <body>\n"
         "    <is_anonymous>false</is_anonymous>\n"
         "    <customer>\n"
         f"      <id>{customer_id}</id>\n"
-        f"      <user_id>{user_id}</user_id>\n"
+        f"      <identity_uuid>{identity_uuid}</identity_uuid>\n"
         f"      <type>{customer_type}</type>\n"
         f"      <email>{email}</email>\n"
         "    </customer>\n"
@@ -85,7 +85,7 @@ def build_consumption_order(
 
 def build_invoice_request(
     consumption_order_message_id: str,
-    user_id: str,
+    identity_uuid: str,
     first_name: str,
     last_name: str,
     email: str,
@@ -102,17 +102,19 @@ def build_invoice_request(
         "<message>\n"
         "  <header>\n"
         f"    <message_id>{uuid.uuid4()}</message_id>\n"
-        "    <type>invoice_request</type>\n"
-        "    <source>crm</source>\n"
         f"    <timestamp>{ts()}</timestamp>\n"
+        "    <source>crm</source>\n"
+        "    <type>invoice_request</type>\n"
         "    <version>2.0</version>\n"
         f"    <correlation_id>{consumption_order_message_id}</correlation_id>\n"
         "  </header>\n"
         "  <body>\n"
-        f"    <user_id>{user_id}</user_id>\n"
+        f"    <identity_uuid>{identity_uuid}</identity_uuid>\n"
         "    <invoice_data>\n"
-        f"      <first_name>{first_name}</first_name>\n"
-        f"      <last_name>{last_name}</last_name>\n"
+        "      <contact>\n"
+        f"        <first_name>{first_name}</first_name>\n"
+        f"        <last_name>{last_name}</last_name>\n"
+        "      </contact>\n"
         f"      <email>{email}</email>\n"
         "      <address>\n"
         f"        <street>{street}</street>\n"
@@ -173,7 +175,7 @@ print("=" * 60)
 xml = build_consumption_order(
     message_id=ORDER_ID_BADGE_001,
     customer_id="bedrijf-nv-001",
-    user_id=USER_ID_BADGE_001,
+    identity_uuid=USER_ID_BADGE_001,
     email="jan.peeters@bedrijf.com",
     items=[
         {"description": "Coca-Cola", "price": "2.50", "quantity": 2, "vat_rate": 21},
@@ -188,7 +190,7 @@ time.sleep(1)
 xml = build_consumption_order(
     message_id=ORDER_ID_BADGE_002,
     customer_id="bedrijf-nv-001",
-    user_id=USER_ID_BADGE_002,
+    identity_uuid=USER_ID_BADGE_002,
     email="marie.janssen@bedrijf.com",
     items=[
         {"description": "Fanta", "price": "2.50", "quantity": 3, "vat_rate": 21},
@@ -202,7 +204,7 @@ time.sleep(1)
 xml = build_consumption_order(
     message_id=ORDER_ID_BADGE_003,
     customer_id="tech-corp-001",
-    user_id=USER_ID_BADGE_003,
+    identity_uuid=USER_ID_BADGE_003,
     email="piet.janssen@techcorp.be",
     items=[
         {"description": "Koffie", "price": "1.50", "quantity": 2, "vat_rate": 21},
@@ -225,7 +227,7 @@ print("=" * 60)
 
 xml = build_invoice_request(
     consumption_order_message_id=ORDER_ID_BADGE_001,
-    user_id=USER_ID_BADGE_001,
+    identity_uuid=USER_ID_BADGE_001,
     first_name="Jan",
     last_name="Peeters",
     email="jan.peeters@bedrijf.com",
@@ -239,7 +241,7 @@ time.sleep(1)
 
 xml = build_invoice_request(
     consumption_order_message_id=ORDER_ID_BADGE_003,
-    user_id=USER_ID_BADGE_003,
+    identity_uuid=USER_ID_BADGE_003,
     first_name="Piet",
     last_name="Janssen",
     email="piet.janssen@techcorp.be",
