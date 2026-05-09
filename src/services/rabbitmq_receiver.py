@@ -100,7 +100,7 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
         "user_id": root.findtext("body/identity_uuid") or "",
         "correlation_id": root.findtext("header/correlation_id") or "",
         "customer": {
-            "type": root.findtext("body/invoice_data/type") or "private",
+            "type": "company" if root.findtext("body/invoice_data/company_name") else "private",
             "first_name": root.findtext("body/invoice_data/contact/first_name") or "",
             "last_name": root.findtext("body/invoice_data/contact/last_name") or "",
             "email": root.findtext("body/invoice_data/email") or "",
