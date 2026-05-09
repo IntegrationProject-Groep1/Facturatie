@@ -200,7 +200,10 @@ def process_message(
         # Request master UUID from identity-service
         try:
             master_uuid = request_master_uuid(customer_data["email"])
-            logging.info("[RECEIVER] master_uuid received | email=%s | master_uuid=%s", customer_data['email'], master_uuid)
+            logging.info(
+                "[RECEIVER] master_uuid received | email=%s | master_uuid=%s",
+                customer_data['email'], master_uuid
+            )
         except Exception as e:
             logging.error("[RECEIVER] master_uuid request failed: %s", e)
             send_to_dlq(channel, body, [f"ERROR: identity_service_failed: {e}"])

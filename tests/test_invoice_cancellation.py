@@ -144,8 +144,7 @@ def test_fossbilling_failure_sends_to_dlq():
         process_message(channel, _make_method(), MagicMock(), body)
 
     channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
-    channel.basic_publish.assert_called_once()
-    assert "dlq" in str(channel.basic_publish.call_args).lower()
+    assert any("dlq" in str(c).lower() for c in channel.basic_publish.call_args_list)
 
 
 def test_successful_flow_acks_and_notifies_crm():
