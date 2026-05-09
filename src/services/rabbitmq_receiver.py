@@ -16,6 +16,7 @@ from .rabbitmq_sender import (
     publish_invoice_cancelled,
     publish_invoice_link,
     send_message,
+    send_system_error,
 )
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
@@ -117,14 +118,14 @@ def process_message(
     _properties: pika.spec.BasicProperties,
     body: bytes
 ) -> None:
-    print("\n[RECEIVER] Message received")
+    logging.info("[RECEIVER] Message received")
 
     # Step 1: parse XML — catch both invalid XML and bad encodings
     try:
         xml_str = body.decode("utf-8")
         root = defused_fromstring(xml_str)
     except (ET.ParseError, UnicodeDecodeError) as e:
-        print(f"[RECEIVER] ERROR: Invalid XML or encoding — {e}")
+        logging.error("[RECEIVER] INVALID XML or encoding: %s", e)
         send_to_dlq(channel, body, [f"ERROR: invalid_xml: {e}"])
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
@@ -132,7 +133,7 @@ def process_message(
     # Step 2: duplicate detection based on header/message_id
     msg_id = root.findtext("header/message_id")
     if msg_id and is_duplicate(msg_id, seen_message_ids):
-        print(f"[RECEIVER] WARN: duplicate_message_id: '{msg_id}' — ignored")
+        logging.warning("[RECEIVER] duplicate_message_id: '%s' — ignored", msg_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
 
@@ -140,18 +141,38 @@ def process_message(
     msg_type = root.findtext("header/type") or "unknown"
     source = root.findtext("header/source") or ""
 
+    # Use unified payment schema (Contract v2.3-12)
     if msg_type == "payment_registered":
-        if source == "frontend":
-            schema_name = "payment_registered_Frontend"
-        else:
-            schema_name = "payment_registered_CRM"
+        schema_name = "payment_registered"
     else:
         schema_name = msg_type
 
     is_valid, error_msg = validate_xml(xml_str, schema_name)
 
     if not is_valid:
-        print(f"[RECEIVER] ERROR: xsd_validation_failed — {error_msg}")
+        logging.error("=" * 60)
+        logging.error("[RECEIVER] XSD VALIDATION FAILED")
+        logging.error("Message Type: %s", msg_type)
+        logging.error("Source:       %s", source)
+        logging.error("Error:        %s", error_msg)
+        logging.error("=" * 60)
+
+        # PROTOCOL: Inbound Message (The "Validator" Log) - Failure
+        send_log(
+            level="error",
+            action="xml_validation",
+            message=f"Received {msg_type} from {source}. Validation: Failure. Error: {error_msg}",
+            channel=channel
+        )
+
+        # Publish official system_error to Monitoring (Contract §2.6)
+        send_system_error(
+            error_code="XSD_VALIDATION_ERROR",
+            message=f"Validation failed for {schema_name}: {error_msg}",
+            severity="critical",
+            correlation_id=msg_id,
+            channel=channel
+        )
         send_to_dlq(channel, body, [f"ERROR: xsd_validation: {error_msg}"])
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
@@ -160,9 +181,17 @@ def process_message(
     if msg_id:
         seen_message_ids.add(msg_id)
 
-    print(
-        f"[RECEIVER] Valid message received"
-        f" | type={msg_type} | message_id={msg_id}"
+    # PROTOCOL: Inbound Message (The "Validator" Log) - Success
+    send_log(
+        level="info",
+        action="xml_validation",
+        message=f"Received {msg_type} from {source}. Validation: Success.",
+        channel=channel
+    )
+
+    logging.info(
+        "[RECEIVER] Valid message received | type=%s | message_id=%s",
+        msg_type, msg_id
     )
 
     # Process new customer registration
@@ -172,9 +201,9 @@ def process_message(
         # Request master UUID from identity-service
         try:
             master_uuid = request_master_uuid(customer_data["email"])
-            print(f"[RECEIVER] master_uuid received | email={customer_data['email']} | master_uuid={master_uuid}")
+            logging.info("[RECEIVER] master_uuid received | email=%s | master_uuid=%s", customer_data['email'], master_uuid)
         except Exception as e:
-            print(f"[RECEIVER] ERROR: master_uuid request failed — {e}")
+            logging.error("[RECEIVER] master_uuid request failed: %s", e)
             send_to_dlq(channel, body, [f"ERROR: identity_service_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -205,9 +234,10 @@ def process_message(
             channel=channel
         )
 
-        print(
-            f"[RECEIVER] send_mailing sent | invoice_id={invoice_id}"
-            f" | correlation_id={msg_id}"
+        logging.info(
+            "[RECEIVER] send_mailing sent | invoice_id=%s"
+            " | correlation_id=%s",
+            invoice_id, msg_id
         )
 
         try:
@@ -424,7 +454,7 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     elif msg_type == "payment_registered":
-        print("[RECEIVER] Handling payment_registered")
+        logging.info("[RECEIVER] Handling payment_registered")
 
         try:
             # Extract invoice info — inkomend formaat (Kassa→Facturatie via CRM passthrough)
@@ -458,17 +488,18 @@ def process_message(
 
             identity_uuid = root.findtext("body/identity_uuid") or root.findtext("body/user_id") or ""
 
-            print(
-                f"[RECEIVER] Payment data extracted"
-                f" | invoice_id={invoice_id} | amount={amount} {currency}"
-                f" | method={payment_method} | transaction_id={transaction_id}"
+            logging.info(
+                "[RECEIVER] Payment data extracted"
+                " | invoice_id=%s | amount=%s %s"
+                " | method=%s | transaction_id=%s",
+                invoice_id, amount, currency, payment_method, transaction_id
             )
 
             success = pay_invoice(invoice_id, amount)
             if not success:
                 raise Exception(f"Failed to register payment for invoice '{invoice_id}'")
 
-            print(f"[RECEIVER] Payment registered in FossBilling | invoice_id={invoice_id}")
+            logging.info("[RECEIVER] Payment registered in FossBilling | invoice_id=%s", invoice_id)
 
             paid_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             confirmation_xml = build_payment_confirmed_xml(
@@ -485,9 +516,10 @@ def process_message(
                 routing_key=CRM_QUEUE,
                 channel=channel,
             )
-            print(
-                f"[RECEIVER] payment_registered confirmation sent"
-                f" | invoice_id={invoice_id} | correlation_id={msg_id}"
+            logging.info(
+                "[RECEIVER] payment_registered confirmation sent"
+                " | invoice_id=%s | correlation_id=%s",
+                invoice_id, msg_id
             )
 
             send_log("info", "payment", f"Payment registered for invoice {invoice_id}", channel=channel)
@@ -496,12 +528,12 @@ def process_message(
 
         except Exception as e:
             send_log("error", "system_error", f"FossBilling payment failed: {e}", channel=channel)
-            print(f"[RECEIVER] ERROR: payment_registered_failed: {e}")
+            logging.error("[RECEIVER] ERROR: payment_registered_failed: %s", e)
             send_to_dlq(channel, body, [f"ERROR: payment_registered_failed: {e}"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     elif msg_type == "invoice_cancelled":
-        print(f"[RECEIVER][{msg_type}] Handling cancellation")
+        logging.info("[RECEIVER][%s] Handling cancellation", msg_type)
 
         errors = validate_invoice_cancelled(root)
         if errors:
@@ -524,7 +556,7 @@ def process_message(
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
+        logging.info("[RECEIVER][%s] Processing invoice=%s", msg_type, invoice_id)
 
         try:
             status = fossbilling_client.get_invoice_status(invoice_id)
@@ -576,7 +608,7 @@ def process_message(
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
     else:
-        print(f"[RECEIVER] No handler for type '{msg_type}' — acknowledging")
+        logging.info("[RECEIVER] No handler for type '%s' — acknowledging", msg_type)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
 
@@ -586,7 +618,7 @@ def start_receiver(queue: str | None = None) -> None:
 
     consumption_store.init_db()
 
-    print(f"[RECEIVER] Starting — will listen on queue '{queue}'")
+    logging.info("[RECEIVER] Starting — will listen on queue '%s'", queue)
 
     while True:
         connection = None
@@ -598,11 +630,11 @@ def start_receiver(queue: str | None = None) -> None:
             channel.basic_qos(prefetch_count=1)
             channel.basic_consume(queue=queue, on_message_callback=process_message)
 
-            print(f"[RECEIVER] Listening on queue '{queue}'... (CTRL+C to stop)")
+            logging.info("[RECEIVER] Listening on queue '%s'... (CTRL+C to stop)", queue)
             channel.start_consuming()
 
         except KeyboardInterrupt:
-            print("\n[RECEIVER] Stopping consumer...")
+            logging.info("[RECEIVER] Stopping consumer...")
             break
 
         except Exception as e:

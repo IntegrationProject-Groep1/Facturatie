@@ -144,4 +144,4 @@ def send_to_dlq(
         )
     )
 
-    print(f"[DLQ] Message forwarded to DLQ. Errors: {errors}")
+    logging.info("[DLQ] Message forwarded to DLQ. Errors: %s", errors)

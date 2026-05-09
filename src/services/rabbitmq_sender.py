@@ -112,7 +112,34 @@ def send_message(
             content_type="application/xml"
         )
     )
-    print(f"[SENDER] Message sent to queue '{routing_key}'")
+    logging.info("[SENDER] Message sent to queue '%s'", routing_key)
+
+    # PROTOCOL: Outbound Message (The "Tracker" Log)
+    # We parse the message to get the type and correlation_id for the log message
+    try:
+        temp_root = ET.fromstring(xml_message)
+        msg_type = temp_root.findtext("header/type") or "unknown"
+        corr_id = temp_root.findtext("header/correlation_id") or temp_root.findtext("header/message_id") or "N/A"
+        
+        # Mapping message types to protocol actions
+        action_map = {
+            "invoice_available": "invoice",
+            "invoice_cancelled": "invoice",
+            "payment_registered": "payment",
+            "send_mailing": "email",
+            "system_error": "system_error",
+            "heartbeat": "session"
+        }
+        log_action = action_map.get(msg_type, "invoice")
+        
+        send_log(
+            level="info",
+            action=log_action,
+            message=f"Published {msg_type} to {routing_key}. CorrelationID: {corr_id}",
+            channel=channel
+        )
+    except Exception as log_err:
+        logging.warning("[SENDER] Metadata extraction for Tracker log failed: %s", log_err)
 
     # Only close if we opened the connection here
     if connection is not None:
@@ -239,7 +266,6 @@ def build_payment_confirmed_xml(
     transaction = ET.SubElement(body, "transaction")
     ET.SubElement(transaction, "id").text = transaction_id or str(uuid.uuid4())
     ET.SubElement(transaction, "payment_method").text = payment_method
-    ET.SubElement(transaction, "timestamp").text = paid_at
 
     ET.indent(root, space="    ")
     xml_str = (
@@ -247,8 +273,8 @@ def build_payment_confirmed_xml(
         + ET.tostring(root, encoding="unicode")
     )
 
-    # Validate against XSD before sending
-    is_valid, error_msg = validate_xml(xml_str, "payment_registered_outgoing")
+    # Validate against unified XSD (Section 8.2)
+    is_valid, error_msg = validate_xml(xml_str, "payment_registered")
     if not is_valid:
         raise ValueError(
             f"[SENDER] payment_registered XSD validation failed: {error_msg}"
@@ -376,6 +402,57 @@ def publish_cancellation_failed(
     )
 
 
+def build_system_error_xml(
+    error_code: str,
+    message: str,
+    severity: str = "critical",
+    correlation_id: str | None = None,
+    source: str = "facturatie",
+) -> str:
+    """
+    Builds a system_error XML message (Section 2.6).
+    """
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "system_error"
+    ET.SubElement(header, "version").text = "2.0"
+    if correlation_id:
+        ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "error_code").text = error_code
+    ET.SubElement(body, "message").text = message
+    ET.SubElement(body, "severity").text = severity
+
+    ET.indent(root, space="    ")
+    xml_str = f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+
+    # Pre-validation against system_error.xsd
+    is_valid, err = validate_xml(xml_str, "system_error")
+    if not is_valid:
+        logging.error("[SENDER] system_error XSD validation failed locally: %s", err)
+
+    return xml_str
+
+
+def send_system_error(
+    error_code: str,
+    message: str,
+    severity: str = "critical",
+    correlation_id: str | None = None,
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """Publishes a system_error to the errors.facturatie queue."""
+    xml = build_system_error_xml(error_code, message, severity, correlation_id)
+    send_message(xml, routing_key="errors.facturatie", channel=channel)
+
+
 def send_error_to_monitor(error_message: str) -> None:
     """
     Sends an error notification to the central error queue (errors.facturatie).
@@ -396,25 +473,49 @@ def send_error_to_monitor(error_message: str) -> None:
     send_message(xml_error, routing_key="errors.facturatie")
 
 
-def send_log(level: str, action: str, message: str, channel=None) -> None:
-    """Sends a log message to the monitoring logs queue."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<message>
-  <header>
-    <message_id>{uuid.uuid4()}</message_id>
-    <timestamp>{ts}</timestamp>
-    <source>facturatie</source>
-    <type>log</type>
-    <version>2.0</version>
-  </header>
-  <body>
-    <level>{level}</level>
-    <action>{action}</action>
-    <message>{message}</message>
-  </body>
-</message>"""
-    send_message(xml, routing_key="logs", channel=channel)
+def build_log_xml(
+    level: str,
+    action: str,
+    message: str,
+    source: str = "facturatie",
+) -> str:
+    """
+    Builds a log XML message (Section 3.5).
+    """
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "log"
+    ET.SubElement(header, "version").text = "2.0"
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "level").text = level
+    ET.SubElement(body, "action").text = action
+    ET.SubElement(body, "message").text = message
+
+    ET.indent(root, space="    ")
+    xml_str = f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+
+    # Pre-validation against log.xsd
+    is_valid, err = validate_xml(xml_str, "log")
+    if not is_valid:
+        logging.error("[SENDER] log XSD validation failed locally: %s", err)
+
+    return xml_str
+
+
+def send_log(level: str, action: str, message: str, channel: pika.channel.Channel | None = None) -> None:
+    """Sends a validated log message to the central 'logs' queue."""
+    try:
+        xml = build_log_xml(level, action, message)
+        send_message(xml, routing_key="logs", channel=channel)
+    except Exception as e:
+        logging.error("[SENDER] Failed to send log: %s", e)
 
 
 if __name__ == "__main__":

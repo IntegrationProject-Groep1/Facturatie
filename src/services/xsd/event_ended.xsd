@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Frontend → Facturatie: event_ended (§11.6). Triggers factuur-mailing via facturatie.incoming. -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
   <xs:simpleType name="UUIDType">
     <xs:restriction base="xs:string">

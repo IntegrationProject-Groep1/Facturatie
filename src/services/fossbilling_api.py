@@ -70,7 +70,7 @@ def _get_or_create_client(customer_data: dict) -> int:
     """Returns existing client_id if email is already registered, otherwise creates a new client."""
     existing_id = _get_client_by_email(customer_data["email"])
     if existing_id is not None:
-        print(f"[FOSSBILLING] Client already exists | client_id={existing_id}")
+        logging.info("[FOSSBILLING] Client already exists | client_id=%s", existing_id)
         return existing_id
     return _create_client(customer_data)
 
@@ -93,7 +93,7 @@ def update_client(client_id: int, customer_data: dict) -> None:
     if customer_data.get("company_name"):
         payload["company"] = customer_data["company_name"]
     _api_post("admin/client/update", payload)
-    print(f"[FOSSBILLING] Client updated | client_id={client_id}")
+    logging.info("[FOSSBILLING] Client updated | client_id=%s", client_id)
 
 
 def _create_invoice(client_id: int, items: list[dict]) -> str:
@@ -137,11 +137,11 @@ def create_registration_invoice(customer_data: dict) -> str:
         try:
             client_id = _get_or_create_client(customer_data)
             invoice_id = _create_invoice(client_id, items)
-            print(f"[FOSSBILLING] Invoice created | invoice_id={invoice_id} | attempt={attempt}/{MAX_RETRIES}")
+            logging.info("[FOSSBILLING] Invoice created | invoice_id=%s | attempt=%d/%d", invoice_id, attempt, MAX_RETRIES)
             return invoice_id
         except Exception as e:
             last_error = e
-            print(f"[FOSSBILLING] Attempt {attempt}/{MAX_RETRIES} failed: {e}")
+            logging.error("[FOSSBILLING] Attempt %d/%d failed: %s", attempt, MAX_RETRIES, e)
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY_SECONDS)
 
@@ -165,7 +165,13 @@ def pay_invoice(invoice_id: str, amount: str) -> bool:
         return True
 
     except Exception as e:
-        print(f"[FOSSBILLING] ERROR: Failed to update invoice '{invoice_id}': {e}")
+        from .rabbitmq_sender import send_log
+        send_log(
+            level="error",
+            action="system_error",
+            message=f"Internal Error in [FossBilling_API]: Failed to update invoice '{invoice_id}': {e}"
+        )
+        logging.error("[FOSSBILLING] ERROR: Failed to update invoice '%s': %s", invoice_id, e)
         return False
 
 
@@ -311,8 +317,8 @@ def cancel_invoice(invoice_id: str) -> bool:
     """
     try:
         _api_post("admin/invoice/update", {"id": invoice_id, "status": "cancelled"})
-        print(f"[FOSSBILLING] Invoice '{invoice_id}' successfully marked as cancelled")
+        logging.info("[FOSSBILLING] Invoice '%s' successfully marked as cancelled", invoice_id)
         return True
     except Exception as e:
-        print(f"[FOSSBILLING] ERROR: Failed to cancel invoice '{invoice_id}': {e}")
+        logging.error("[FOSSBILLING] ERROR: Failed to cancel invoice '%s': %s", invoice_id, e)
         return False

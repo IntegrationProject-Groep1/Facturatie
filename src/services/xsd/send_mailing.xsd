@@ -1,13 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  TYPE   : send_mailing
-  FLOW   : Facturatie → Mailing  (queue: facturatie.to.mailing)
-  VERSIE : 2.0
-  Mailing gebruikt hetzelfde schema voor CRM én Facturatie — source onderscheidt de afzender.
-  Conform contract sectie 13.1
--->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
-
   <xs:simpleType name="UUIDType">
     <xs:restriction base="xs:string">
       <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
@@ -20,19 +12,13 @@
         <xs:complexType><xs:sequence>
           <xs:element name="message_id" type="UUIDType"/>
           <xs:element name="timestamp"  type="xs:dateTime"/>
-          <xs:element name="source">
-            <xs:simpleType>
-              <xs:restriction base="xs:string">
-                <xs:enumeration value="crm"/>
-                <xs:enumeration value="facturatie"/>
-              </xs:restriction>
-            </xs:simpleType>
-          </xs:element>
+          <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="crm"/>
+            <xs:enumeration value="facturatie"/></xs:restriction></xs:simpleType></xs:element>
           <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
             <xs:enumeration value="send_mailing"/></xs:restriction></xs:simpleType></xs:element>
           <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
             <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
-          <!-- correlation_id: verplicht — koppelt terug aan het originele bericht dat de mailing triggerde -->
           <xs:element name="correlation_id" type="UUIDType"/>
         </xs:sequence></xs:complexType>
       </xs:element>
@@ -65,11 +51,11 @@
               </xs:element>
             </xs:sequence></xs:complexType>
           </xs:element>
-          <!-- template_data: JSON string met variabelen voor de mail template (invoice_id, amount, etc.) -->
+          <!-- template_data: JSON string met variabelen voor SendGrid template -->
           <xs:element name="template_data" type="xs:string" minOccurs="0"/>
-          <!-- body_html: plain HTML — wanneer geen template gebruikt wordt -->
-          <xs:element name="body_html"     type="xs:string" minOccurs="0"/>
-          <!-- attachment: optionele Base64 bijlage (factuur-PDF) -->
+          <!-- body_html: plain HTML — wanneer geen SendGrid template gebruikt wordt -->
+          <xs:element name="body_html" type="xs:string" minOccurs="0"/>
+          <!-- attachment: Base64 bijlage (factuur-PDF, badge QR-code) — zie Mailing doc sectie 3 -->
           <xs:element name="attachment" minOccurs="0">
             <xs:complexType>
               <xs:sequence>

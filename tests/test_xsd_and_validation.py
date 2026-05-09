@@ -189,6 +189,63 @@ def test_event_ended_invalid_date() -> None:
     assert is_valid is False
 
 
+# ── payment_registered validatie ──────────────────────────────────────────────
+
+def test_valid_payment_registered_kassa() -> None:
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<message>
+  <header>
+    <message_id>a23bc45d-89ef-1234-b567-1f03c3d4e580</message_id>
+    <timestamp>2026-05-15T18:35:00Z</timestamp>
+    <source>kassa</source>
+    <type>payment_registered</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
+    <invoice>
+      <id>INV-2026-001</id>
+      <amount_paid currency="eur">15.00</amount_paid>
+      <status>paid</status>
+    </invoice>
+    <payment_context>consumption</payment_context>
+    <transaction>
+      <id>TRANS-12345</id>
+      <payment_method>on_site</payment_method>
+    </transaction>
+  </body>
+</message>"""
+    is_valid, errors = validate_xml(xml, "payment_registered")
+    assert is_valid is True, f"Payment Registered validation failed: {errors}"
+
+
+def test_valid_payment_registered_anonymous() -> None:
+    """Anonieme betaling (geen identity_uuid) moet nu geldig zijn (v2.3-12)."""
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<message>
+  <header>
+    <message_id>a23bc45d-89ef-1234-b567-1f03c3d4e580</message_id>
+    <timestamp>2026-05-15T18:35:00Z</timestamp>
+    <source>kassa</source>
+    <type>payment_registered</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <invoice>
+      <amount_paid currency="eur">5.00</amount_paid>
+      <status>paid</status>
+    </invoice>
+    <payment_context>consumption</payment_context>
+    <transaction>
+      <id>TRANS-999</id>
+      <payment_method>on_site</payment_method>
+    </transaction>
+  </body>
+</message>"""
+    is_valid, errors = validate_xml(xml, "payment_registered")
+    assert is_valid is True, f"Anonymous payment failed validation: {errors}"
+
+
 # ── duplicate detection ───────────────────────────────────────────────────────
 
 def test_duplicate_message_is_flagged() -> None:

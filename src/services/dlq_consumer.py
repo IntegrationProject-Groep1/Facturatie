@@ -8,6 +8,7 @@ import pika.spec
 from dotenv import load_dotenv
 
 from src.services.rabbitmq_utils import get_connection
+from src.services.rabbitmq_sender import send_log, send_system_error
 
 load_dotenv()
 
@@ -79,7 +80,14 @@ def process_dlq_message(
     )
 
     logger.error(alert_line)
-    print(alert_line)
+
+    # PROTOCOL: System Failures (The "Emergency" Log)
+    send_log(
+        level="error",
+        action="system_error",
+        message=f"Internal Error in [DLQ_Consumer]: Message hit DLQ. Details: {alert_line}",
+        channel=channel
+    )
 
     channel.basic_ack(delivery_tag=method.delivery_tag)
     logger.info("[DLQ] Message acknowledged (ack)")

@@ -48,7 +48,7 @@
                 <xs:enumeration value="invoice_request"/></xs:restriction></xs:simpleType></xs:element>
               <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
                 <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
-              <!-- correlation_id = message_id van de bijhorende consumption_order (zie §11.3) -->
+              <!-- correlation_id = message_id van de bijhorende consumption_order (zie 11.3) -->
               <xs:element name="correlation_id" type="UUIDType"/>
             </xs:sequence>
           </xs:complexType>
@@ -57,7 +57,7 @@
           <xs:complexType>
             <xs:sequence>
               <xs:element name="identity_uuid" type="UUIDType"/>
-              <xs:element name="invoice_data"  type="InvoiceDataType"/>
+              <xs:element name="invoice_data" type="InvoiceDataType"/>
               <!-- GEEN <items> of <total> — Facturatie haalt die uit de consumption_order -->
             </xs:sequence>
           </xs:complexType>
