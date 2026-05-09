@@ -604,6 +604,49 @@ def process_message(
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
+    elif msg_type == "profile_update":
+        try:
+            identity_uuid = root.findtext("body/identity_uuid") or ""
+            email = root.findtext("body/email") or ""
+            first_name = root.findtext("body/contact/first_name") or ""
+            last_name = root.findtext("body/contact/last_name") or ""
+            company_name = root.findtext("body/company_name") or ""
+            vat_number = root.findtext("body/vat_number") or ""
+            customer_type = root.findtext("body/type") or "private"
+
+            logging.info(
+                "[RECEIVER] profile_update received | identity_uuid=%s | company=%s",
+                identity_uuid, company_name
+            )
+
+            # Update customer data in FossBilling using identity_uuid
+            success = fossbilling_client.update_client_by_identity_uuid(
+                identity_uuid=identity_uuid,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                company_name=company_name,
+                vat_number=vat_number,
+            )
+
+            if not success:
+                raise Exception(f"FossBilling update failed for identity_uuid={identity_uuid}")
+
+            send_log(
+                "info", "user",
+                f"Profile updated for identity_uuid={identity_uuid}",
+                channel=channel
+            )
+
+            logging.info("[RECEIVER] profile_update processed | identity_uuid=%s", identity_uuid)
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+
+        except Exception as e:
+            logging.error("[RECEIVER] ERROR: profile_update_failed: %s", e)
+            send_log("error", "system_error", f"profile_update failed: {e}", channel=channel)
+            send_to_dlq(channel, body, [f"ERROR: profile_update_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
     else:
         logging.info("[RECEIVER] No handler for type '%s' — acknowledging", msg_type)
         channel.basic_ack(delivery_tag=method.delivery_tag)
