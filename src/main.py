@@ -20,11 +20,6 @@ def _declare_queues() -> None:
     conn = get_connection()
     ch = conn.channel()
     ch.queue_declare(queue=mailing_queue, durable=True)
-    ch.queue_declare(
-        queue=CRM_QUEUE,
-        durable=True,
-        arguments={"x-dead-letter-exchange": "crm.dlx"}
-    )
     ch.queue_declare(queue=FRONTEND_QUEUE, durable=True)
     conn.close()
 
