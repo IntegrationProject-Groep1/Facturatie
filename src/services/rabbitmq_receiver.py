@@ -7,6 +7,7 @@ import os
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import fromstring as defused_fromstring
 from datetime import datetime, timezone
+import re
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
 from .rabbitmq_sender import (
@@ -15,6 +16,7 @@ from .rabbitmq_sender import (
     publish_cancellation_failed,
     publish_invoice_cancelled,
     publish_invoice_link,
+    publish_vat_validation_error,
     send_message,
     send_system_error,
     CRM_QUEUE,
@@ -115,6 +117,13 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
     }
 
 
+def _is_valid_vat(vat_number: str) -> bool:
+    """Validates Belgian VAT number format: BE + 10 digits."""
+    if not vat_number:
+        return False
+    return bool(re.match(r'^BE\d{10}$', vat_number.upper()))
+
+
 def process_message(
     channel: pika.channel.Channel,
     method: pika.spec.Basic.Deliver,
@@ -200,6 +209,22 @@ def process_message(
     # Process new customer registration
     if msg_type == "new_registration":
         customer_data = extract_customer_data(root)
+
+        vat_number = customer_data.get("vat_number", "")
+        if vat_number and not _is_valid_vat(vat_number):
+            logging.warning("[RECEIVER] Invalid VAT number: %s", vat_number)
+            try:
+                publish_vat_validation_error(
+                    vat_number=vat_number,
+                    identity_uuid=customer_data.get("customer_id", ""),
+                    error_message=f"BTW-nummer {vat_number} heeft een ongeldig formaat",
+                    correlation_id=msg_id,
+                    channel=channel,
+                )
+            except Exception as vat_err:
+                logging.warning("[RECEIVER] Failed to send vat_validation_error: %s", vat_err)
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
 
         # Request master UUID from identity-service
         try:
