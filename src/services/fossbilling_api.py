@@ -314,6 +314,51 @@ def process_consumption_order(
     raise Exception(f"FossBilling consumption order failed after {MAX_RETRIES} attempts: {last_error}")
 
 
+def get_invoice_type(invoice_id: str) -> str:
+    """Returns 'registration' if the invoice contains 'Inschrijvingskosten', otherwise 'consumption'."""
+    try:
+        result = _api_post("admin/invoice/get", {"id": invoice_id})
+        lines = result.get("result", {}).get("lines", [])
+        for line in lines:
+            if "inschrijvingskosten" in line.get("title", "").lower():
+                return "registration"
+        return "consumption"
+    except Exception as e:
+        logging.error("[FOSSBILLING] ERROR: Could not determine invoice type for '%s': %s", invoice_id, e)
+        return "consumption"
+
+
+def create_credit_note(invoice_id: str) -> str:
+    """Creates a credit note (negative invoice) for a paid registration invoice.
+    Returns the credit note invoice_id.
+    Raises Exception if the original invoice cannot be fetched or the credit note cannot be created.
+    """
+    result = _api_post("admin/invoice/get", {"id": invoice_id})
+    invoice = result.get("result", {})
+    client_id = int(invoice["client_id"])
+    lines = invoice.get("lines", [])
+
+    if not lines:
+        raise Exception(f"Invoice '{invoice_id}' has no line items — cannot create credit note")
+
+    credit_items = [
+        {
+            "title": f"Creditnota: {line['title']}",
+            "price": -abs(float(line["price"])),
+            "quantity": line.get("quantity", 1),
+            "vat_rate": line.get("taxrate", ""),
+        }
+        for line in lines
+    ]
+
+    credit_note_id = _create_invoice(client_id, credit_items)
+    logging.info(
+        "[FOSSBILLING] Credit note created | credit_note_id=%s | original_invoice_id=%s",
+        credit_note_id, invoice_id,
+    )
+    return credit_note_id
+
+
 def cancel_invoice(invoice_id: str) -> bool:
     """Cancels an invoice in FossBilling by setting its status to 'cancelled'.
     Returns True on success, False on any failure.

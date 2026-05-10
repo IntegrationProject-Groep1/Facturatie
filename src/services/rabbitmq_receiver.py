@@ -577,16 +577,73 @@ def process_message(
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        if status in ("paid", "cancelled"):
-            reason = "invoice_already_paid" if status == "paid" else "invoice_already_cancelled"
+        if status == "cancelled":
             logging.warning(
-                "[RECEIVER][%s] Cancellation blocked — invoice '%s' has status '%s'",
-                msg_type, invoice_id, status
+                "[RECEIVER][%s] Cancellation blocked — invoice '%s' already cancelled",
+                msg_type, invoice_id
             )
             publish_cancellation_failed(
                 invoice_id,
                 customer_id=customer_id,
-                reason=reason,
+                reason="invoice_already_cancelled",
+                channel=channel,
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        if status == "paid":
+            invoice_type = fossbilling_client.get_invoice_type(invoice_id)
+            logging.info(
+                "[RECEIVER][%s] Paid invoice '%s' — type=%s", msg_type, invoice_id, invoice_type
+            )
+
+            if invoice_type == "consumption":
+                logging.warning(
+                    "[RECEIVER][%s] Cancellation blocked — consumption invoice '%s' cannot be cancelled",
+                    msg_type, invoice_id
+                )
+                publish_cancellation_failed(
+                    invoice_id,
+                    customer_id=customer_id,
+                    reason="consumption_invoice_cannot_be_cancelled",
+                    channel=channel,
+                )
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+                return
+
+            try:
+                credit_note_id = fossbilling_client.create_credit_note(invoice_id)
+                publish_invoice_cancelled(invoice_id, customer_id, channel=channel)
+                send_log(
+                    "info", "invoice",
+                    f"Credit note {credit_note_id} created for paid registration invoice {invoice_id}",
+                    channel=channel,
+                )
+                logging.info(
+                    "[RECEIVER][%s] Credit note created | credit_note_id=%s | original_invoice_id=%s",
+                    msg_type, credit_note_id, invoice_id,
+                )
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+                return
+            except Exception as e:
+                logging.error(
+                    "[RECEIVER][%s] ERROR: credit note creation failed for invoice '%s': %s",
+                    msg_type, invoice_id, e
+                )
+                send_to_dlq(channel, body, [f"ERROR: credit_note_creation_failed for invoice '{invoice_id}': {e}"])
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+                return
+
+        invoice_type = fossbilling_client.get_invoice_type(invoice_id)
+        if invoice_type == "consumption":
+            logging.warning(
+                "[RECEIVER][%s] Cancellation blocked — consumption invoice '%s' cannot be cancelled",
+                msg_type, invoice_id
+            )
+            publish_cancellation_failed(
+                invoice_id,
+                customer_id=customer_id,
+                reason="consumption_invoice_cannot_be_cancelled",
                 channel=channel,
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
