@@ -406,7 +406,11 @@ def process_message(
                     if not items:
                         continue
                     meta = consumption_store.get_company_meta(company_id)
-                    master_uuid = meta.get("master_uuid", "")
+                    event_identity_uuid = root.findtext("body/identity_uuid") or ""
+                    master_uuid = meta.get("master_uuid", "") or event_identity_uuid
+                    if not master_uuid:
+                        logging.error(f"[RECEIVER] Geen UUID gevonden voor company {company_id}")
+                        master_uuid = "00000000-0000-0000-0000-000000000000"
                     invoice_id = fossbilling_client.process_consumption_order(
                         company_id, items, company_name=meta["company_name"]
                     )
@@ -425,7 +429,7 @@ def process_message(
                             correlation_id=msg_id,
                             first_name=meta.get("first_name", ""),
                             last_name=meta.get("last_name", ""),
-                            identity_uuid=meta.get("master_uuid", ""),
+                            identity_uuid=meta.get("master_uuid", "") or master_uuid,
                             subject=f"Uw factuur {invoice_id} staat klaar",
                         )
                         send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
