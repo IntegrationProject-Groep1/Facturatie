@@ -7,7 +7,7 @@ from src.services.rabbitmq_receiver import start_receiver
 from src.services.dlq_consumer import start_dlq_consumer
 from src.services.consumption_store import init_db
 from src.services.rabbitmq_utils import get_connection
-from src.services.rabbitmq_sender import CRM_QUEUE, FRONTEND_QUEUE
+from src.services.rabbitmq_sender import FRONTEND_QUEUE
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,11 +20,6 @@ def _declare_queues() -> None:
     conn = get_connection()
     ch = conn.channel()
     ch.queue_declare(queue=mailing_queue, durable=True)
-    ch.queue_declare(
-        queue=CRM_QUEUE,
-        durable=True,
-        arguments={"x-dead-letter-exchange": "crm.dlx"}
-    )
     ch.queue_declare(queue=FRONTEND_QUEUE, durable=True)
     conn.close()
 

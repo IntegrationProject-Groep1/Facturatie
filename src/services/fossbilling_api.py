@@ -137,6 +137,11 @@ def create_registration_invoice(customer_data: dict) -> str:
         try:
             client_id = _get_or_create_client(customer_data)
             invoice_id = _create_invoice(client_id, items)
+
+            if customer_data.get("payment_status") == "paid":
+                mark_invoice_as_paid(invoice_id)
+                logging.info("[FOSSBILLING] Invoice marked as paid | invoice_id=%s", invoice_id)
+
             logging.info(
                 "[FOSSBILLING] Invoice created | invoice_id=%s | attempt=%d/%d",
                 invoice_id, attempt, MAX_RETRIES
@@ -412,3 +417,26 @@ def update_client_by_identity_uuid(
     except Exception as e:
         logging.error("[FOSSBILLING] ERROR: profile_update failed for identity_uuid=%s: %s", identity_uuid, e)
         return False
+
+
+def mark_invoice_as_paid(invoice_id: str) -> None:
+    """Marks an invoice as paid in FossBilling."""
+    gateway_id = _get_custom_gateway_id()
+    _api_post("admin/invoice/update", {
+        "id": int(invoice_id),
+        "gateway_id": gateway_id,
+    })
+    _api_post("admin/invoice/mark_as_paid", {
+        "id": int(invoice_id),
+    })
+    logging.info("[FOSSBILLING] Invoice %s marked as paid", invoice_id)
+
+
+def _get_custom_gateway_id() -> int:
+    """Gets the database ID of the Custom payment gateway."""
+    result = _api_post("admin/invoice/gateway_get_list", {})
+    gateways = result.get("result", {}).get("list", [])
+    for gw in gateways:
+        if gw.get("code") == "Custom":
+            return int(gw["id"])
+    raise Exception("Custom payment gateway not found in FossBilling")
