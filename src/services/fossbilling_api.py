@@ -419,16 +419,6 @@ def update_client_by_identity_uuid(
         return False
 
 
-def _get_custom_gateway_id() -> int:
-    """Gets the database ID of the Custom payment gateway."""
-    result = _api_post("admin/invoice/gateway_get_list", {})
-    gateways = result.get("result", {}).get("list", [])
-    for gw in gateways:
-        if gw.get("gateway") == "Custom":
-            return int(gw["id"])
-    raise Exception("Custom payment gateway not found in FossBilling")
-
-
 def mark_invoice_as_paid(invoice_id: str) -> None:
     """Marks an invoice as paid in FossBilling."""
     gateway_id = _get_custom_gateway_id()
