@@ -574,3 +574,66 @@ if __name__ == "__main__":
     )
     print("[SENDER] XML:\n", xml)
     send_message(xml)
+
+
+def build_vat_validation_error_xml(
+    vat_number: str,
+    identity_uuid: str = "",
+    error_message: str = "",
+    correlation_id: str | None = None,
+    source: str = "facturatie",
+) -> str:
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "vat_validation_error"
+    ET.SubElement(header, "version").text = "2.0"
+    if correlation_id:
+        ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    if identity_uuid:
+        ET.SubElement(body, "identity_uuid").text = identity_uuid
+    ET.SubElement(body, "vat_number").text = vat_number
+    if error_message:
+        ET.SubElement(body, "error_message").text = error_message
+    ET.SubElement(body, "timestamp").text = timestamp
+
+    ET.indent(root, space="    ")
+    xml_str = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
+
+    is_valid, error_msg = validate_xml(xml_str, "vat_validation_error")
+    if not is_valid:
+        raise ValueError(f"[SENDER] vat_validation_error XSD validation failed: {error_msg}")
+
+    return xml_str
+
+
+def publish_vat_validation_error(
+    vat_number: str,
+    identity_uuid: str = "",
+    error_message: str = "",
+    correlation_id: str | None = None,
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """Publishes a vat_validation_error to the Frontend queue."""
+    xml_message = build_vat_validation_error_xml(
+        vat_number=vat_number,
+        identity_uuid=identity_uuid,
+        error_message=error_message,
+        correlation_id=correlation_id,
+    )
+    send_message(xml_message, routing_key=FRONTEND_QUEUE, channel=channel)
+    logging.info(
+        "[SENDER] vat_validation_error sent | vat_number=%s | identity_uuid=%s",
+        vat_number, identity_uuid,
+    )
