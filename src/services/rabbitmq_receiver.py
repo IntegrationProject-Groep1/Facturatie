@@ -80,6 +80,8 @@ def extract_customer_data(root: ET.Element) -> dict:
         },
         "registration_fee": amount_el.text if amount_el is not None else "0.00",
         "fee_currency": amount_el.get("currency", "eur") if amount_el is not None else "eur",
+        "payment_status": root.findtext("body/customer/payment_due/status") or "unpaid",
+        "vat_number": root.findtext("body/customer/vat_number") or "",
     }
 
 
@@ -404,7 +406,11 @@ def process_message(
                     if not items:
                         continue
                     meta = consumption_store.get_company_meta(company_id)
-                    master_uuid = meta.get("master_uuid", "")
+                    event_identity_uuid = root.findtext("body/identity_uuid") or ""
+                    master_uuid = meta.get("master_uuid", "") or event_identity_uuid
+                    if not master_uuid:
+                        logging.error(f"[RECEIVER] Geen UUID gevonden voor company {company_id}")
+                        master_uuid = "00000000-0000-0000-0000-000000000000"
                     invoice_id = fossbilling_client.process_consumption_order(
                         company_id, items, company_name=meta["company_name"]
                     )
@@ -423,7 +429,7 @@ def process_message(
                             correlation_id=msg_id,
                             first_name=meta.get("first_name", ""),
                             last_name=meta.get("last_name", ""),
-                            identity_uuid=meta.get("master_uuid", ""),
+                            identity_uuid=meta.get("master_uuid", "") or master_uuid,
                             subject=f"Uw factuur {invoice_id} staat klaar",
                         )
                         send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
@@ -467,6 +473,9 @@ def process_message(
                 raise ValueError("Missing <invoice> element")
 
             invoice_id = invoice_el.findtext("id")
+
+            due_date = invoice_el.findtext("due_date") or ""
+
             if not invoice_id:
                 raise ValueError("Missing invoice id in <invoice><id>")
 
@@ -507,6 +516,7 @@ def process_message(
                 currency=currency,
                 payment_method=payment_method_out,
                 paid_at=paid_at,
+                due_date=due_date,
             )
             send_message(
                 confirmation_xml,
