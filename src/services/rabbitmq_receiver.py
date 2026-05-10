@@ -17,6 +17,7 @@ from .rabbitmq_sender import (
     publish_invoice_link,
     send_message,
     send_system_error,
+    CRM_QUEUE,
 )
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
@@ -507,7 +508,6 @@ def process_message(
                 payment_method=payment_method_out,
                 paid_at=paid_at,
             )
-            from src.services.rabbitmq_sender import CRM_QUEUE
             send_message(
                 confirmation_xml,
                 routing_key=CRM_QUEUE,
