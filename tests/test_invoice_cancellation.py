@@ -197,14 +197,13 @@ def test_paid_invoice_sends_failed_notification_to_crm():
 
 
 def test_paid_invoice_is_acked_not_sent_to_dlq():
-    """Geblokkeerde annulering is een geldig bericht — moet geacked worden, niet naar DLQ."""
     channel = MagicMock()
     body = _build_xml_bytes()
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
-               return_value="paid"), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+               return_value={"status": "paid", "lines": [{"title": "Koffie"}]}), \
          patch("src.services.rabbitmq_receiver.publish_cancellation_failed"):
         process_message(channel, _make_method(), MagicMock(), body)
 
@@ -218,8 +217,8 @@ def test_pending_invoice_proceeds_with_cancellation():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
-               return_value="unpaid"), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+               return_value={"status": "unpaid", "lines": [{"title": "Inschrijvingskosten"}]}), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice",
                return_value=True), \
          patch("src.services.rabbitmq_receiver.publish_invoice_cancelled"):
@@ -234,7 +233,7 @@ def test_invoice_not_found_sends_error_to_crm():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
                return_value=None), \
          patch("src.services.rabbitmq_receiver.publish_cancellation_failed") as mock_failed:
         process_message(channel, _make_method(), MagicMock(), body)
