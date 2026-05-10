@@ -19,8 +19,13 @@ def _declare_queues() -> None:
     mailing_queue = os.getenv("QUEUE_MAILING", "facturatie.to.mailing")
     conn = get_connection()
     ch = conn.channel()
-    for queue in (mailing_queue, CRM_QUEUE, FRONTEND_QUEUE):
-        ch.queue_declare(queue=queue, durable=True)
+    ch.queue_declare(queue=mailing_queue, durable=True)
+    ch.queue_declare(
+        queue=CRM_QUEUE,
+        durable=True,
+        arguments={"x-dead-letter-exchange": "crm.dlx"}
+    )
+    ch.queue_declare(queue=FRONTEND_QUEUE, durable=True)
     conn.close()
 
 
