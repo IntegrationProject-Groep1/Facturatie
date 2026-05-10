@@ -1,20 +1,20 @@
-# Block Cancellation of Paid Invoices
+# Invoice Cancelled Flow
 
-**Branch:** `feature/block-_paid_invoices`
-**Date:** 2026-04-13
+**Branch:** `fix/fossbilling-connecter`
+**Date:** 2026-05-10
 **Author:** Team Facturatie
 
 ---
 
 ## 1. Problem
 
-The `invoice_cancelled` flow did not check whether an invoice was already paid before cancelling it in FossBilling. This meant a paid invoice could be cancelled, causing financial inconsistencies.
+The `invoice_cancelled` flow did not check whether an invoice was already paid or whether it was a consumption invoice before cancelling it in FossBilling. This meant paid invoices and consumption invoices could be incorrectly cancelled.
 
 ---
 
 ## 2. Solution
 
-Before calling FossBilling to cancel an invoice, the service now fetches the current invoice status first. Based on that status, it either proceeds with the cancellation or blocks it and notifies CRM.
+Before cancelling, the service checks both the **payment status** and the **invoice type**. Consumption invoices can never be cancelled. Paid registration invoices get a credit note instead of a direct cancellation. Only unpaid registration invoices are cancelled directly.
 
 ---
 
@@ -27,27 +27,42 @@ invoice_cancelled message arrives on facturatie.incoming
 [RECEIVER] validates XML → invalid? → facturatie.dlq
         │ valid
         ▼
-invoice_id present? → missing? → facturatie.dlq
+invoice_id present? → missing? → publish_cancellation_failed(missing_invoice_id) → dlq
         │ present
         ▼
 get_invoice_status(invoice_id) via FossBilling API
         │
-        ├── None (not found / API unreachable)
+        ├── None (not found)
         │       → publish_cancellation_failed(reason=invoice_not_found)
-        │       → ack
-        │
-        ├── "paid"
-        │       → publish_cancellation_failed(reason=invoice_already_paid)
         │       → ack
         │
         ├── "cancelled"
         │       → publish_cancellation_failed(reason=invoice_already_cancelled)
         │       → ack
         │
-        └── "unpaid" (or any other status)
-                → cancel_invoice() in FossBilling
-                → publish_invoice_cancelled() to CRM
-                → ack
+        ├── "paid"
+        │       → get_invoice_type(invoice_id)
+        │       │
+        │       ├── "consumption"
+        │       │       → publish_cancellation_failed(reason=consumption_invoice_cannot_be_cancelled)
+        │       │       → ack
+        │       │
+        │       └── "registration"
+        │               → create_credit_note(invoice_id) in FossBilling
+        │               → publish_invoice_cancelled() to CRM
+        │               → ack
+        │
+        └── "unpaid"
+                → get_invoice_type(invoice_id)
+                │
+                ├── "consumption"
+                │       → publish_cancellation_failed(reason=consumption_invoice_cannot_be_cancelled)
+                │       → ack
+                │
+                └── "registration"
+                        → cancel_invoice() in FossBilling
+                        → publish_invoice_cancelled() to CRM
+                        → ack
 ```
 
 ---
@@ -56,11 +71,11 @@ get_invoice_status(invoice_id) via FossBilling API
 
 | File | Change |
 |---|---|
-| `src/services/fossbilling_api.py` | Added `get_invoice_status(invoice_id)` |
-| `src/services/crm_publisher.py` | Added `build_cancellation_failed_xml()` and `publish_cancellation_failed()` |
-| `src/services/rabbitmq_receiver.py` | Added status check before `cancel_invoice()` |
+| `src/services/fossbilling_api.py` | Added `get_invoice_status()`, `get_invoice_type()`, `create_credit_note()`, `cancel_invoice()` |
+| `src/services/rabbitmq_sender.py` | Added `publish_cancellation_failed()`, `publish_invoice_cancelled()` |
+| `src/services/rabbitmq_receiver.py` | Updated `invoice_cancelled` handler met type-check en creditnota logica |
 | `tests/test_block_paid_invoice_cancellation.py` | 15 tests covering all scenarios |
-| `scripts/send_cancellation.py` | Manual test script |
+| `scripts/send_test_invoice_cancelled.py` | Manual test script voor 3 scenario's |
 
 ---
 
@@ -81,7 +96,26 @@ Fetches the current status of an invoice from FossBilling.
 
 ---
 
-### `publish_cancellation_failed(invoice_id, customer_id, correlation_id, reason)` — `crm_publisher.py`
+### `get_invoice_type(invoice_id)` — `fossbilling_api.py`
+
+Determines the invoice type by checking the line items.
+
+| Return value | Meaning |
+|---|---|
+| `"registration"` | Invoice contains a line with "inschrijvingskosten" (case-insensitive) |
+| `"consumption"` | All other invoices |
+
+**FossBilling endpoint:** `POST admin/invoice/get`
+
+---
+
+### `create_credit_note(invoice_id)` — `fossbilling_api.py`
+
+Creates a credit note (negative invoice) for a paid registration invoice. Fetches the original invoice lines and creates a new invoice with negated amounts and titles prefixed with `"Creditnota: "`. Returns the new credit note invoice ID.
+
+---
+
+### `publish_cancellation_failed(invoice_id, customer_id, reason)` — `rabbitmq_sender.py`
 
 Sends an `invoice_cancelled` message with `status=failed` to the CRM queue when a cancellation is blocked.
 
@@ -113,9 +147,9 @@ Sends an `invoice_cancelled` message with `status=failed` to the CRM queue when 
 
 | Reason | When |
 |---|---|
-| `invoice_already_paid` | Invoice status is `paid` |
-| `invoice_already_cancelled` | Invoice status is `cancelled` |
-| `invoice_not_found` | FossBilling returns nothing or API is unreachable |
+| `invoice_not_found` | FossBilling kent het invoice ID niet |
+| `invoice_already_cancelled` | Factuur is al geannuleerd |
+| `consumption_invoice_cannot_be_cancelled` | Consumptiefactuur — betaald of onbetaald, kan nooit geannuleerd worden |
 
 ---
 
@@ -145,23 +179,24 @@ Sends an `invoice_cancelled` message with `status=failed` to the CRM queue when 
 
 ## 8. Manual testing
 
-Start the service:
+Start the receiver:
 ```powershell
-.venv/Scripts/python -m src.main
+python -m src.main
 ```
 
-Send a cancellation for a specific invoice:
+Run het testscript (pas de invoice IDs bovenaan het script aan naar bestaande facturen):
 ```powershell
-.venv/Scripts/python scripts/send_cancellation.py <invoice_id>
+python -m scripts.send_test_invoice_cancelled
 ```
 
-Check the current status of an invoice directly:
+Check de huidige status van een factuur:
 ```powershell
-.venv/Scripts/python -c "
+python -c "
 from dotenv import load_dotenv
 load_dotenv()
-from src.services.fossbilling_api import get_invoice_status
+from src.services.fossbilling_api import get_invoice_status, get_invoice_type
 print('Status:', get_invoice_status('<invoice_id>'))
+print('Type:', get_invoice_type('<invoice_id>'))
 "
 ```
 
@@ -171,9 +206,10 @@ print('Status:', get_invoice_status('<invoice_id>'))
 
 | Scenario | Invoice | Observed output |
 |---|---|---|
-| Unpaid invoice | 77, 78 | `Flow complete` — cancelled in FossBilling, CRM notified |
-| Already cancelled invoice | 78 | `Cancellation blocked` — CRM notified with `invoice_already_cancelled` |
-| Paid invoice (marked via API) | 75 | `Cancellation blocked` — CRM notified with `invoice_already_paid` |
-| Invoice not found / API down | — | CRM notified with `invoice_not_found`, message acked |
+| Paid registratiefactuur | #64 | `Credit note created | credit_note_id=70` — creditnota zichtbaar in FossBilling |
+| Paid consumptiefactuur | #62 | `cancellation_failed | reason=consumption_invoice_cannot_be_cancelled` |
+| Unpaid registratiefactuur | #73 | `Invoice '73' successfully marked as cancelled` |
+| Al geannuleerde factuur | #73 (2e keer) | `cancellation_failed | reason=invoice_already_cancelled` |
+| Invoice not found | — | `cancellation_failed | reason=invoice_not_found` |
 
 > **Note:** FossBilling's admin dashboard may not visually reflect status changes after an API update. This is a known UI behaviour in FossBilling. The API itself correctly stores and returns the updated status. Always use `get_invoice_status()` to verify, not the dashboard.

@@ -178,23 +178,32 @@ def pay_invoice(invoice_id: str, amount: str) -> bool:
         return False
 
 
-def get_invoice_status(invoice_id: str) -> str | None:
-    """Returns the status of an invoice from FossBilling (e.g. 'paid', 'unpaid', 'cancelled').
-    Returns None if the invoice is definitively not found.
+def get_invoice(invoice_id: str) -> dict | None:
+    """Fetches the full invoice object from FossBilling.
+    Returns None if the invoice is not found.
     Raises Exception for transient errors (network issues, API unreachable).
     """
     try:
         result = _api_post("admin/invoice/get", {"id": invoice_id})
-        return result.get("result", {}).get("status")
+        return result.get("result", {})
     except FossBillingNotFoundError:
         logging.info("[FOSSBILLING] Invoice '%s' not found in FossBilling", invoice_id)
         return None
     except Exception as e:
         logging.error(
-            "[FOSSBILLING] ERROR: Could not fetch status for invoice '%s': %s: %s",
+            "[FOSSBILLING] ERROR: Could not fetch invoice '%s': %s: %s",
             invoice_id, type(e).__name__, e
         )
         raise
+
+
+def get_invoice_status(invoice_id: str) -> str | None:
+    """Returns the status of an invoice from FossBilling (e.g. 'paid', 'unpaid', 'cancelled').
+    Returns None if the invoice is definitively not found.
+    Raises Exception for transient errors (network issues, API unreachable).
+    """
+    invoice = get_invoice(invoice_id)
+    return invoice.get("status") if invoice is not None else None
 
 
 def get_client_by_company_id(company_id: str) -> int | None:
@@ -312,6 +321,45 @@ def process_consumption_order(
                 time.sleep(RETRY_DELAY_SECONDS)
 
     raise Exception(f"FossBilling consumption order failed after {MAX_RETRIES} attempts: {last_error}")
+
+
+def get_invoice_type(invoice: dict) -> str:
+    """Returns 'registration' if the invoice contains 'Inschrijvingskosten', otherwise 'consumption'."""
+    lines = invoice.get("lines", [])
+    for line in lines:
+        if "inschrijvingskosten" in line.get("title", "").lower():
+            return "registration"
+    return "consumption"
+
+
+def create_credit_note(invoice: dict) -> str:
+    """Creates a credit note (negative invoice) for a paid registration invoice.
+    Accepts an already-fetched invoice dict to avoid a redundant API call.
+    Returns the credit note invoice_id.
+    Raises Exception if the credit note cannot be created.
+    """
+    client_id = int(invoice["client_id"])
+    lines = invoice.get("lines", [])
+
+    if not lines:
+        raise Exception("Invoice has no line items — cannot create credit note")
+
+    credit_items = [
+        {
+            "title": f"Creditnota: {line['title']}",
+            "price": -abs(float(line["price"])),
+            "quantity": line.get("quantity", 1),
+            "vat_rate": line.get("taxrate", ""),
+        }
+        for line in lines
+    ]
+
+    credit_note_id = _create_invoice(client_id, credit_items)
+    logging.info(
+        "[FOSSBILLING] Credit note created | credit_note_id=%s",
+        credit_note_id,
+    )
+    return credit_note_id
 
 
 def cancel_invoice(invoice_id: str) -> bool:
