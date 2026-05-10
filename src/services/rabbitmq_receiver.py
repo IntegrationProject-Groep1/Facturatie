@@ -469,6 +469,9 @@ def process_message(
                 raise ValueError("Missing <invoice> element")
 
             invoice_id = invoice_el.findtext("id")
+
+            due_date = invoice_el.findtext("due_date") or ""
+
             if not invoice_id:
                 raise ValueError("Missing invoice id in <invoice><id>")
 
@@ -509,6 +512,7 @@ def process_message(
                 currency=currency,
                 payment_method=payment_method_out,
                 paid_at=paid_at,
+                due_date=due_date,
             )
             send_message(
                 confirmation_xml,
