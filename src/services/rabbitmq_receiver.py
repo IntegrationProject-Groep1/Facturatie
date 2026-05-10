@@ -80,6 +80,8 @@ def extract_customer_data(root: ET.Element) -> dict:
         },
         "registration_fee": amount_el.text if amount_el is not None else "0.00",
         "fee_currency": amount_el.get("currency", "eur") if amount_el is not None else "eur",
+        "payment_status": root.findtext("body/customer/payment_due/status") or "unpaid",
+        "vat_number": root.findtext("body/customer/vat_number") or "",
     }
 
 
