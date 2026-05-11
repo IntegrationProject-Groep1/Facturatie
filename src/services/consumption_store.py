@@ -146,7 +146,8 @@ def get_company_meta(company_id: str) -> dict:
     finally:
         conn.close()
     if row is None:
-        return {"email": "", "company_name": "", "master_uuid": "", "first_name": "", "last_name": "", "customer_id": ""}
+        return {"email": "", "company_name": "", "master_uuid": "",
+                "first_name": "", "last_name": "", "customer_id": ""}
     return {
         "email": row["email"],
         "company_name": row["company_name"],
@@ -182,13 +183,15 @@ def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[i
 
     grouped: dict[tuple, dict] = {}
     for row in rows:
+        # Normalize vat_rate to ensure None and "" are grouped together
+        vat_rate = row["vat_rate"] or ""
         key = (row["description"], row["price"], row["vat_rate"])
         if key not in grouped:
             grouped[key] = {
                 "title": row["description"],
                 "price": str(row["price"]),
                 "quantity": 0,
-                "vat_rate": row["vat_rate"] or "",
+                "vat_rate": vat_rate,
             }
         grouped[key]["quantity"] += row["quantity"]
 
@@ -266,13 +269,14 @@ def get_items_for_company(company_id: str) -> tuple[list[dict], list[int]]:
 
     grouped: dict[tuple, dict] = {}
     for row in rows:
+        vat_rate = row["vat_rate"] or ""
         key = (row["description"], row["price"], row["vat_rate"])
         if key not in grouped:
             grouped[key] = {
                 "title": row["description"],
                 "price": str(row["price"]),
                 "quantity": 0,
-                "vat_rate": row["vat_rate"] or "",
+                "vat_rate": vat_rate
             }
         grouped[key]["quantity"] += row["quantity"]
 
