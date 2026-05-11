@@ -181,7 +181,7 @@ def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[i
 
     items = [
         {
-            "title": f"{row['description']} (badge: {row['badge_id']})" if row['badge_id'] else row['description'],
+            "title": row['description'],
             "price": str(row["price"]),
             "quantity": row["quantity"],
             "vat_rate": row["vat_rate"] or "",
