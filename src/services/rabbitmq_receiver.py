@@ -7,6 +7,7 @@ import os
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import fromstring as defused_fromstring
 from datetime import datetime, timezone
+import re
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
 from .rabbitmq_sender import (
@@ -15,8 +16,10 @@ from .rabbitmq_sender import (
     publish_cancellation_failed,
     publish_invoice_cancelled,
     publish_invoice_link,
+    publish_vat_validation_error,
     send_message,
     send_system_error,
+    CRM_QUEUE,
 )
 from src.utils.xml_validator import validate_xml
 from src.services.rabbitmq_utils import (
@@ -79,6 +82,8 @@ def extract_customer_data(root: ET.Element) -> dict:
         },
         "registration_fee": amount_el.text if amount_el is not None else "0.00",
         "fee_currency": amount_el.get("currency", "eur") if amount_el is not None else "eur",
+        "payment_status": root.findtext("body/customer/payment_due/status") or "unpaid",
+        "vat_number": root.findtext("body/customer/vat_number") or "",
     }
 
 
@@ -110,6 +115,13 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
             "address": address,
         },
     }
+
+
+def _is_valid_vat(vat_number: str) -> bool:
+    """Validates Belgian VAT number format: BE + 10 digits."""
+    if not vat_number:
+        return False
+    return bool(re.match(r'^BE\d{10}$', vat_number.upper()))
 
 
 def process_message(
@@ -197,6 +209,22 @@ def process_message(
     # Process new customer registration
     if msg_type == "new_registration":
         customer_data = extract_customer_data(root)
+
+        vat_number = customer_data.get("vat_number", "")
+        if vat_number and not _is_valid_vat(vat_number):
+            logging.warning("[RECEIVER] Invalid VAT number: %s", vat_number)
+            try:
+                publish_vat_validation_error(
+                    vat_number=vat_number,
+                    identity_uuid=customer_data.get("customer_id", ""),
+                    error_message=f"BTW-nummer {vat_number} heeft een ongeldig formaat",
+                    correlation_id=msg_id,
+                    channel=channel,
+                )
+            except Exception as vat_err:
+                logging.warning("[RECEIVER] Failed to send vat_validation_error: %s", vat_err)
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
 
         # Request master UUID from identity-service
         try:
@@ -403,7 +431,11 @@ def process_message(
                     if not items:
                         continue
                     meta = consumption_store.get_company_meta(company_id)
-                    master_uuid = meta.get("master_uuid", "")
+                    event_identity_uuid = root.findtext("body/identity_uuid") or ""
+                    master_uuid = meta.get("master_uuid", "") or event_identity_uuid
+                    if not master_uuid:
+                        logging.error(f"[RECEIVER] Geen UUID gevonden voor company {company_id}")
+                        master_uuid = "00000000-0000-0000-0000-000000000000"
                     invoice_id = fossbilling_client.process_consumption_order(
                         company_id, items, company_name=meta["company_name"]
                     )
@@ -422,7 +454,7 @@ def process_message(
                             correlation_id=msg_id,
                             first_name=meta.get("first_name", ""),
                             last_name=meta.get("last_name", ""),
-                            identity_uuid=meta.get("master_uuid", ""),
+                            identity_uuid=meta.get("master_uuid", "") or master_uuid,
                             subject=f"Uw factuur {invoice_id} staat klaar",
                         )
                         send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
@@ -466,6 +498,9 @@ def process_message(
                 raise ValueError("Missing <invoice> element")
 
             invoice_id = invoice_el.findtext("id")
+
+            due_date = invoice_el.findtext("due_date") or ""
+
             if not invoice_id:
                 raise ValueError("Missing invoice id in <invoice><id>")
 
@@ -506,8 +541,8 @@ def process_message(
                 currency=currency,
                 payment_method=payment_method_out,
                 paid_at=paid_at,
+                due_date=due_date,
             )
-            from src.services.rabbitmq_sender import CRM_QUEUE
             send_message(
                 confirmation_xml,
                 routing_key=CRM_QUEUE,
@@ -539,7 +574,7 @@ def process_message(
             return
 
         invoice_id = root.findtext("body/invoice_id")
-        customer_id = root.findtext("body/user_id") or ""
+        customer_id = root.findtext("body/identity_uuid") or ""
         correlation_id = root.findtext("header/message_id")
 
         if not invoice_id:
@@ -556,15 +591,15 @@ def process_message(
         logging.info("[RECEIVER][%s] Processing invoice=%s", msg_type, invoice_id)
 
         try:
-            status = fossbilling_client.get_invoice_status(invoice_id)
+            invoice = fossbilling_client.get_invoice(invoice_id)
         except Exception as e:
-            error_msg = f"ERROR: FossBilling unreachable during status check: {e}"
+            error_msg = f"ERROR: FossBilling unreachable during invoice fetch: {e}"
             logging.error("[RECEIVER][%s] %s", msg_type, error_msg)
             send_to_dlq(channel, body, [error_msg])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        if status is None:
+        if invoice is None:
             logging.warning(
                 "[RECEIVER][%s] Invoice '%s' not found in FossBilling", msg_type, invoice_id
             )
@@ -577,20 +612,63 @@ def process_message(
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        if status in ("paid", "cancelled"):
-            reason = "invoice_already_paid" if status == "paid" else "invoice_already_cancelled"
+        status = invoice.get("status")
+        invoice_type = fossbilling_client.get_invoice_type(invoice)
+
+        if status == "cancelled":
             logging.warning(
-                "[RECEIVER][%s] Cancellation blocked — invoice '%s' has status '%s'",
-                msg_type, invoice_id, status
+                "[RECEIVER][%s] Cancellation blocked — invoice '%s' already cancelled",
+                msg_type, invoice_id
             )
             publish_cancellation_failed(
                 invoice_id,
                 customer_id=customer_id,
-                reason=reason,
+                reason="invoice_already_cancelled",
                 channel=channel,
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
+
+        if invoice_type == "consumption":
+            logging.warning(
+                "[RECEIVER][%s] Cancellation blocked — consumption invoice '%s' cannot be cancelled",
+                msg_type, invoice_id
+            )
+            publish_cancellation_failed(
+                invoice_id,
+                customer_id=customer_id,
+                reason="consumption_invoice_cannot_be_cancelled",
+                channel=channel,
+            )
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        if status == "paid":
+            logging.info(
+                "[RECEIVER][%s] Paid registration invoice '%s' — creating credit note", msg_type, invoice_id
+            )
+            try:
+                credit_note_id = fossbilling_client.create_credit_note(invoice)
+                publish_invoice_cancelled(invoice_id, customer_id, channel=channel)
+                send_log(
+                    "info", "invoice",
+                    f"Credit note {credit_note_id} created for paid registration invoice {invoice_id}",
+                    channel=channel,
+                )
+                logging.info(
+                    "[RECEIVER][%s] Credit note created | credit_note_id=%s | original_invoice_id=%s",
+                    msg_type, credit_note_id, invoice_id,
+                )
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+                return
+            except Exception as e:
+                logging.error(
+                    "[RECEIVER][%s] ERROR: credit note creation failed for invoice '%s': %s",
+                    msg_type, invoice_id, e
+                )
+                send_to_dlq(channel, body, [f"ERROR: credit_note_creation_failed for invoice '{invoice_id}': {e}"])
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+                return
 
         success = fossbilling_client.cancel_invoice(invoice_id)
         if not success:

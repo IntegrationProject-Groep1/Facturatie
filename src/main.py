@@ -7,7 +7,7 @@ from src.services.rabbitmq_receiver import start_receiver
 from src.services.dlq_consumer import start_dlq_consumer
 from src.services.consumption_store import init_db
 from src.services.rabbitmq_utils import get_connection
-from src.services.rabbitmq_sender import CRM_QUEUE, FRONTEND_QUEUE
+from src.services.rabbitmq_sender import FRONTEND_QUEUE
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,7 +19,10 @@ def _declare_queues() -> None:
     mailing_queue = os.getenv("QUEUE_MAILING", "facturatie.to.mailing")
     conn = get_connection()
     ch = conn.channel()
-    for queue in (mailing_queue, CRM_QUEUE, FRONTEND_QUEUE):
+    # Only declare queues facturatie owns. CRM_QUEUE (crm.incoming) is owned by
+    # the CRM team and already exists with x-dead-letter-exchange=crm.dlx; a
+    # plain durable-only declare would raise PRECONDITION_FAILED.
+    for queue in (mailing_queue, FRONTEND_QUEUE):
         ch.queue_declare(queue=queue, durable=True)
     conn.close()
 
