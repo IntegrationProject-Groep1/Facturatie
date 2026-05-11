@@ -139,17 +139,19 @@ def get_company_meta(company_id: str) -> dict:
     try:
         with conn.cursor(dictionary=True) as cursor:
             cursor.execute(
-                "SELECT email, company_name FROM pending_consumptions WHERE company_id = %s LIMIT 1",
+                "SELECT email, company_name, master_uuid FROM pending_consumptions WHERE company_id = %s LIMIT 1",
                 (company_id,),
             )
             row = cursor.fetchone()
     finally:
         conn.close()
     if row is None:
-        return {"email": "", "company_name": "", "first_name": "", "last_name": "", "customer_id": ""}
+        return {"email": "", "company_name": "", "master_uuid": "",
+                "first_name": "", "last_name": "", "customer_id": ""}
     return {
         "email": row["email"],
         "company_name": row["company_name"],
+        "master_uuid": row["master_uuid"],
         "first_name": "",
         "last_name": "",
         "customer_id": "",
@@ -188,6 +190,21 @@ def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[i
         }
         for row in rows
     ]
+    grouped: dict[tuple, dict] = {}
+    for row in rows:
+        # Normalize vat_rate to ensure None and "" are grouped together
+        vat_rate = row["vat_rate"] or ""
+        key = (row["description"], row["price"], row["vat_rate"])
+        if key not in grouped:
+            grouped[key] = {
+                "title": row["description"],
+                "price": str(row["price"]),
+                "quantity": 0,
+                "vat_rate": vat_rate,
+            }
+        grouped[key]["quantity"] += row["quantity"]
+
+    items = list(grouped.values())
     row_ids = [row["id"] for row in rows]
     return items, row_ids, company_id
 
@@ -246,6 +263,21 @@ def save_company_client_id(company_id: str, client_id: int) -> None:
     logging.info("[DB] Company billing account saved: company_id=%s → client_id=%s", company_id, client_id)
 
 
+def delete_company_client_id(company_id: str) -> None:
+    """Deletes the FossBilling billing client_id for a company from the cache."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM company_accounts WHERE company_id = %s",
+                (company_id,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    logging.info("[DB] Company billing account cleared from cache: company_id=%s", company_id)
+
+
 def get_items_for_company(company_id: str) -> tuple[list[dict], list[int]]:
     """Returns (items, row_ids) for a company to prevent race conditions."""
     conn = _get_connection()
@@ -259,15 +291,20 @@ def get_items_for_company(company_id: str) -> tuple[list[dict], list[int]]:
     finally:
         conn.close()
 
-    items = [
-        {
-            "title": f"{row['description']} (badge: {row['badge_id']})",
-            "price": str(row["price"]),
-            "quantity": row["quantity"],
-            "vat_rate": row["vat_rate"] or "",
-        }
-        for row in rows
-    ]
+    grouped: dict[tuple, dict] = {}
+    for row in rows:
+        vat_rate = row["vat_rate"] or ""
+        key = (row["description"], row["price"], row["vat_rate"])
+        if key not in grouped:
+            grouped[key] = {
+                "title": row["description"],
+                "price": str(row["price"]),
+                "quantity": 0,
+                "vat_rate": vat_rate
+            }
+        grouped[key]["quantity"] += row["quantity"]
+
+    items = list(grouped.values())
     row_ids = [row["id"] for row in rows]
     return items, row_ids
 

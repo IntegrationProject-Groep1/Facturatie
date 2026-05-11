@@ -115,7 +115,6 @@ def send_message(
         connection = get_connection()
         channel = connection.channel()
 
-    channel.queue_declare(queue=routing_key, durable=True)
     # delivery_mode=2 ensures the message is persisted to disk
     channel.basic_publish(
         exchange="",
