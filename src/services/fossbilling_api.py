@@ -24,13 +24,13 @@ def _api_post(endpoint: str, data: dict) -> dict:
     """Makes an authenticated POST request to the FossBilling admin API."""
     url = f"{os.getenv('BILLING_API_URL', 'http://localhost/api')}/{endpoint}"
     auth = (os.getenv("BILLING_API_USERNAME", "admin"), os.getenv("BILLING_API_TOKEN", ""))
-    
+
     # We add X-Forwarded-Proto: https to trick FossBilling into thinking it's already on HTTPS.
     # This prevents redirects to HTTPS when FossBilling is configured with an https:// base URL.
     headers = {
         "X-Forwarded-Proto": "https"
     }
-    
+
     response = requests.post(url, data=data, auth=auth, headers=headers, timeout=10)
     response.raise_for_status()
     result = response.json()
@@ -334,7 +334,7 @@ def process_consumption_order(
                     company_id
                 )
                 delete_company_client_id(company_id)
-            
+
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY_SECONDS)
         except Exception as e:
