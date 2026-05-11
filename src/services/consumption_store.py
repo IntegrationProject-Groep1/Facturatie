@@ -246,6 +246,21 @@ def save_company_client_id(company_id: str, client_id: int) -> None:
     logging.info("[DB] Company billing account saved: company_id=%s → client_id=%s", company_id, client_id)
 
 
+def delete_company_client_id(company_id: str) -> None:
+    """Deletes the FossBilling billing client_id for a company from the cache."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM company_accounts WHERE company_id = %s",
+                (company_id,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    logging.info("[DB] Company billing account cleared from cache: company_id=%s", company_id)
+
+
 def get_items_for_company(company_id: str) -> tuple[list[dict], list[int]]:
     """Returns (items, row_ids) for a company to prevent race conditions."""
     conn = _get_connection()
