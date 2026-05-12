@@ -15,10 +15,9 @@ import uuid
 import xml.etree.ElementTree as ET
 import pika
 from dotenv import load_dotenv
+from src.services.rabbitmq_utils import get_connection
 
 load_dotenv()
-
-from src.services.rabbitmq_utils import get_connection
 
 REQUEST_QUEUE = "identity.user.create.request"
 

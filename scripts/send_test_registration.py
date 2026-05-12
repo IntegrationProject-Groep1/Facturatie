@@ -12,53 +12,51 @@ import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-
-load_dotenv()
-
 from src.services.rabbitmq_sender import send_message
 from src.utils.xml_validator import validate_xml
 
+load_dotenv()
+
 # ── Testdata — pas hier aan naar wens ────────────────────────────────────────
 
-MSG_ID         = str(uuid.uuid4())
-TIMESTAMP      = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-UNIQUE_SUFFIX  = uuid.uuid4().hex[:6]
+MSG_ID = str(uuid.uuid4())
+CORRELATION_ID = str(uuid.uuid4())
+TIMESTAMP = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+UNIQUE_SUFFIX = uuid.uuid4().hex[:6]
 
-USER_ID        = str(uuid.uuid4())   # master_uuid van de Identity Service
-EMAIL          = f"testklant-{UNIQUE_SUFFIX}@voorbeeld.be"
-FIRST_NAME     = "John"
-LAST_NAME      = "Smith"
-DATE_OF_BIRTH  = "1990-06-15"
-IS_COMPANY     = False          # True = bedrijfsklant, False = particulier
-COMPANY_ID     = ""             # Enkel nodig als IS_COMPANY = True
-COMPANY_NAME   = ""             # Enkel nodig als IS_COMPANY = True
-VAT_NUMBER     = ""             # Optioneel
+IDENTITY_UUID = str(uuid.uuid4())
+EMAIL = f"testklant-{UNIQUE_SUFFIX}@voorbeeld.be"
+FIRST_NAME = "John"
+LAST_NAME = "Smith"
+DATE_OF_BIRTH = "1990-06-15"
+IS_COMPANY = False          # True = bedrijfsklant, False = particulier
+COMPANY_ID = ""             # Enkel nodig als IS_COMPANY = True
+COMPANY_NAME = ""           # Enkel nodig als IS_COMPANY = True
+VAT_NUMBER = ""             # Optioneel
 
-SESSION_ID       = "sess-keynote-001"
 REGISTRATION_FEE = "150.00"
-FEE_CURRENCY     = "eur"
+FEE_CURRENCY = "eur"
 
-QUEUE          = "facturatie.incoming"
+QUEUE = "crm.to.facturatie"
 
-# ── XML bouwen ────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+
 
 def build_xml() -> str:
     root = ET.Element("message")
 
-    # Header volgorde conform XSD: message_id → timestamp → source → type → version
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = MSG_ID
     ET.SubElement(header, "timestamp").text = TIMESTAMP
     ET.SubElement(header, "source").text = "crm"
     ET.SubElement(header, "type").text = "new_registration"
     ET.SubElement(header, "version").text = "2.0"
+    ET.SubElement(header, "correlation_id").text = CORRELATION_ID
 
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")
 
-    # Volgorde conform XSD: user_id → email → date_of_birth → contact → type
-    # → company_name → vat_number → company_id → session_id → payment_due
-    ET.SubElement(customer, "user_id").text = USER_ID
+    ET.SubElement(customer, "identity_uuid").text = IDENTITY_UUID
     ET.SubElement(customer, "email").text = EMAIL
     ET.SubElement(customer, "date_of_birth").text = DATE_OF_BIRTH
 
@@ -73,8 +71,6 @@ def build_xml() -> str:
         if VAT_NUMBER:
             ET.SubElement(customer, "vat_number").text = VAT_NUMBER
         ET.SubElement(customer, "company_id").text = COMPANY_ID
-
-    ET.SubElement(customer, "session_id").text = SESSION_ID
 
     payment_due = ET.SubElement(customer, "payment_due")
     amount_el = ET.SubElement(payment_due, "amount")
@@ -105,14 +101,13 @@ if __name__ == "__main__":
 
     print("\n[OK] XSD-validatie geslaagd")
     print(f"[TEST] Versturen naar queue: '{QUEUE}'")
-    print(f"[TEST] User ID:    {USER_ID}")
-    print(f"[TEST] Email:      {EMAIL}")
-    print(f"[TEST] Naam:       {FIRST_NAME} {LAST_NAME}")
+    print(f"[TEST] Identity UUID: {IDENTITY_UUID}")
+    print(f"[TEST] Email:         {EMAIL}")
+    print(f"[TEST] Naam:          {FIRST_NAME} {LAST_NAME}")
     print(f"[TEST] Geboortedatum: {DATE_OF_BIRTH}")
-    print(f"[TEST] Bedrijf:    {'ja — ' + COMPANY_NAME if IS_COMPANY else 'nee'}")
-    print(f"[TEST] Sessie:     {SESSION_ID}")
-    print(f"[TEST] Bedrag:     {REGISTRATION_FEE} {FEE_CURRENCY.upper()}")
-    print(f"[TEST] message_id: {MSG_ID}")
+    print(f"[TEST] Bedrijf:       {'ja — ' + COMPANY_NAME if IS_COMPANY else 'nee'}")
+    print(f"[TEST] Bedrag:        {REGISTRATION_FEE} {FEE_CURRENCY.upper()}")
+    print(f"[TEST] message_id:    {MSG_ID}")
 
     send_message(xml, routing_key=QUEUE)
 
