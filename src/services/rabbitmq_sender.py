@@ -477,7 +477,6 @@ def build_invoice_status_xml(
         + ET.tostring(root, encoding="unicode")
     )
 
-    from src.utils.xml_validator import validate_xml
     is_valid, error_msg = validate_xml(xml_str, "invoice_status")
     if not is_valid:
         raise ValueError(f"[SENDER] invoice_status XSD validation failed: {error_msg}")

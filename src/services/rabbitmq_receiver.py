@@ -281,7 +281,7 @@ def process_message(
                 invoice_id=invoice_id,
                 identity_uuid=master_uuid,
                 status="sent",
-                amount=customer_data["registration_fee"],
+                amount=customer_data.get("registration_fee") or "0.00",
                 correlation_id=msg_id,
                 channel=channel,
             )
@@ -345,7 +345,7 @@ def process_message(
             consumption_store.clear_by_ids(row_ids)
 
             try:
-                item_total = f"{sum(float(item['price']) * item['quantity'] for item in items):.2f}"
+                item_total = f"{sum(float(item.get('price') or 0) * item['quantity'] for item in items):.2f}"
                 publish_invoice_status(
                     invoice_id=invoice_id,
                     identity_uuid=master_uuid,
@@ -468,7 +468,7 @@ def process_message(
                     consumption_store.clear_by_ids(row_ids)
 
                     try:
-                        item_total = f"{sum(float(item['price']) * item['quantity'] for item in items):.2f}"
+                        item_total = f"{sum(float(item.get('price') or 0) * item['quantity'] for item in items):.2f}"
                         publish_invoice_status(
                             invoice_id=invoice_id,
                             identity_uuid=master_uuid,
@@ -581,7 +581,7 @@ def process_message(
                     invoice_id=invoice_id,
                     identity_uuid=identity_uuid,
                     status="paid",
-                    amount=amount,
+                    amount=amount or "0.00",
                     correlation_id=msg_id,
                     channel=channel,
                 )
