@@ -44,7 +44,7 @@ if __name__ == "__main__":
         "  <body>\n"
         f"    <invoice_id>{INVOICE_ID}</invoice_id>\n"
         f"    <identity_uuid>{IDENTITY_UUID}</identity_uuid>\n"
-        "    <reason>Test scenario 3 — annuleer onbetaalde registratie</reason>\n"
+        f"    <reason>Test scenario 3 — cancel unpaid registration</reason>\n"
         "  </body>\n"
         "</message>"
     )
