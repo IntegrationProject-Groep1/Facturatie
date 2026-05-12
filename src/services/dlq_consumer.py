@@ -11,8 +11,6 @@ from dotenv import load_dotenv
 from src.services.rabbitmq_utils import get_connection
 from src.services.rabbitmq_sender import send_log
 
-logging.basicConfig(level=logging.INFO, format='%(message)s', handlers=[logging.StreamHandler(sys.stdout)])
-
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -105,7 +103,7 @@ def start_dlq_consumer(queue: str | None = None) -> None:
     connection = get_connection()
     channel = connection.channel()
 
-    channel.queue_declare(queue=queue, passive=True)
+    channel.queue_declare(queue=queue, passive=False, durable=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=process_dlq_message)
 
@@ -120,4 +118,5 @@ def start_dlq_consumer(queue: str | None = None) -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(sys.stdout)])
     start_dlq_consumer()
