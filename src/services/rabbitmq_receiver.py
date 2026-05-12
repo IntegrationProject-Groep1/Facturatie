@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import fromstring as defused_fromstring
 from datetime import datetime, timezone
 import re
+from decimal import Decimal
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
 from .rabbitmq_sender import (
@@ -531,10 +532,10 @@ def process_message(
             if invoice_data is None:
                 raise Exception(f"Invoice '{invoice_id}' not found in FossBilling")
 
-            invoice_total = float(
+            invoice_total = Decimal(
                 invoice_data.get("total_with_tax") or invoice_data.get("total") or 0
             )
-            payment_amount = float(amount) if amount else 0.0
+            payment_amount = Decimal(amount) if amount else 0.0
             is_full_payment = payment_amount >= invoice_total
 
             if is_full_payment:
