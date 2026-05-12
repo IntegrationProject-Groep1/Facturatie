@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
     print("\n" + "="*60)
     print("Klaar. Controleer:")
-    print(f"  Scenario 1 → FossBilling: nieuwe creditnota factuur zichtbaar")
-    print(f"  Scenario 2 → Receiver log: 'consumption_invoice_cannot_be_cancelled'")
+    print("  Scenario 1 → FossBilling: nieuwe creditnota factuur zichtbaar")
+    print("  Scenario 2 → Receiver log: 'consumption_invoice_cannot_be_cancelled'")
     print(f"  Scenario 3 → FossBilling: factuur {UNPAID_INVOICE_ID} status = cancelled")
     print("="*60)

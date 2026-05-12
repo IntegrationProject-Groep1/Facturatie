@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 from src.services.rabbitmq_sender import send_message
 
+
 def mark_invoice_as_paid(invoice_id, amount="15.00"):
     # UUID's genereren (moeten voldoen aan het regex patroon in de XSD)
     msg_id = str(uuid.uuid4())
@@ -29,7 +30,7 @@ def mark_invoice_as_paid(invoice_id, amount="15.00"):
     # Invoice block [cite: 12]
     invoice = ET.SubElement(body, "invoice")
     ET.SubElement(invoice, "id").text = str(invoice_id)
-    ET.SubElement(invoice, "status").text = "paid" # Enumeration
+    ET.SubElement(invoice, "status").text = "paid"  # Enumeration
 
     # Amount paid (met verplichte currency code [cite: 12])
     amount_paid = ET.SubElement(invoice, "amount_paid", currency="eur")
@@ -40,7 +41,7 @@ def mark_invoice_as_paid(invoice_id, amount="15.00"):
     # Transaction block [cite: 12]
     transaction = ET.SubElement(body, "transaction")
     ET.SubElement(transaction, "id").text = trans_id
-    ET.SubElement(transaction, "payment_method").text = "online" # Enumeration
+    ET.SubElement(transaction, "payment_method").text = "online"  # Enumeration
 
     # XML genereren
     ET.indent(root, space="    ")
@@ -49,6 +50,7 @@ def mark_invoice_as_paid(invoice_id, amount="15.00"):
     print(f"[TEST] Sending payment for Invoice ID: {invoice_id}")
     print(f"[TEST] Message ID: {msg_id}")
     send_message(xml_str, routing_key="facturatie.incoming")
+
 
 if __name__ == "__main__":
     mark_invoice_as_paid(2)

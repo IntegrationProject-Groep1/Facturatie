@@ -181,6 +181,15 @@ def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[i
     finally:
         conn.close()
 
+    items = [
+        {
+            "title": row['description'],
+            "price": str(row["price"]),
+            "quantity": row["quantity"],
+            "vat_rate": row["vat_rate"] or "",
+        }
+        for row in rows
+    ]
     grouped: dict[tuple, dict] = {}
     for row in rows:
         # Normalize vat_rate to ensure None and "" are grouped together

@@ -2,7 +2,6 @@
 Tests voor rabbitmq_sender XML builders.
 Consolideert: test_invoice_request.py (volledig herschreven aan nieuwe XSD)
 """
-import os
 import re
 import xml.etree.ElementTree as ET
 import pytest

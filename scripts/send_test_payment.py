@@ -11,21 +11,16 @@ Run:
     python -m scripts.send_test_payment
 """
 
-import sys
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from src.services.rabbitmq_sender import send_message
 
 QUEUE = "facturatie.incoming"
 
 # ── Pas dit aan ───────────────────────────────────────────────────────────────
-INVOICE_ID     = "14"               # ID van een bestaande factuur in FossBilling
-AMOUNT         = "150.00"           # Bedrag dat betaald wordt
-IDENTITY_UUID  = str(uuid.uuid4())  # Optioneel — klant UUID (laat leeg voor anoniem)
+INVOICE_ID = "14"               # ID van een bestaande factuur in FossBilling
+AMOUNT = "150.00"               # Bedrag dat betaald wordt
+IDENTITY_UUID = str(uuid.uuid4())  # Optioneel — klant UUID (laat leeg voor anoniem)
 # ─────────────────────────────────────────────────────────────────────────────
 
 PAYMENT_METHOD = "on_site"   # on_site | online | company_link

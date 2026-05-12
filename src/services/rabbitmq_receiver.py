@@ -16,6 +16,7 @@ from .rabbitmq_sender import (
     publish_cancellation_failed,
     publish_invoice_cancelled,
     publish_invoice_link,
+    publish_invoice_status,
     publish_vat_validation_error,
     send_message,
     send_system_error,
@@ -275,6 +276,17 @@ def process_message(
             publish_invoice_link(invoice_id, master_uuid, channel=channel)
         except Exception as link_err:
             logging.warning("[RECEIVER] Invoice created but invoice_link failed: %s", link_err)
+        try:
+            publish_invoice_status(
+                invoice_id=invoice_id,
+                identity_uuid=master_uuid,
+                status="sent",
+                amount=customer_data.get("registration_fee") or "0.00",
+                correlation_id=msg_id,
+                channel=channel,
+            )
+        except Exception as status_err:
+            logging.warning("[RECEIVER] invoice_status failed for new_registration: %s", status_err)
         send_log("info", "invoice", f"Registration invoice created: {invoice_id}", channel=channel)
 
         channel.basic_ack(delivery_tag=method.delivery_tag)
@@ -331,6 +343,19 @@ def process_message(
             )
 
             consumption_store.clear_by_ids(row_ids)
+
+            try:
+                item_total = f"{sum(float(item.get('price') or 0) * item['quantity'] for item in items):.2f}"
+                publish_invoice_status(
+                    invoice_id=invoice_id,
+                    identity_uuid=master_uuid,
+                    status="sent",
+                    amount=item_total,
+                    correlation_id=msg_id,
+                    channel=channel,
+                )
+            except Exception as status_err:
+                logging.warning("[RECEIVER] invoice_status failed for invoice_request: %s", status_err)
 
             try:
                 notification_xml = build_invoice_created_notification_xml(
@@ -441,6 +466,23 @@ def process_message(
                     )
 
                     consumption_store.clear_by_ids(row_ids)
+
+                    try:
+                        item_total = f"{sum(float(item.get('price') or 0) * item['quantity'] for item in items):.2f}"
+                        publish_invoice_status(
+                            invoice_id=invoice_id,
+                            identity_uuid=master_uuid,
+                            status="sent",
+                            amount=item_total,
+                            correlation_id=msg_id,
+                            channel=channel,
+                        )
+                    except Exception as status_err:
+                        logging.warning(
+                            "[RECEIVER] invoice_status failed for event_ended company_id=%s: %s",
+                            company_id, status_err
+                        )
+
                     send_log(
                         "info", "invoice",
                         f"Consolidated invoice {invoice_id} created for company {company_id}",
@@ -452,14 +494,15 @@ def process_message(
                             invoice_id=invoice_id,
                             recipient_email=meta["email"],
                             correlation_id=msg_id,
-                            first_name=meta.get("first_name", ""),
-                            last_name=meta.get("last_name", ""),
+                            first_name=meta.get("company_name", ""),
+                            last_name="",
                             identity_uuid=meta.get("master_uuid", "") or master_uuid,
                             subject=f"Uw factuur {invoice_id} staat klaar",
                         )
                         send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
                     except Exception as mail_err:
-                        logging.warning("[RECEIVER] Invoice created but mail failed for %s: %s", company_id, mail_err)
+                        logging.error("[RECEIVER] Mailing failed for company_id=%s: %s", company_id, mail_err)
+                        errors.append(f"company_id={company_id}: mailing_failed: {mail_err}")
 
                     try:
                         publish_invoice_link(invoice_id, master_uuid, channel=channel)
@@ -533,6 +576,18 @@ def process_message(
 
             logging.info("[RECEIVER] Payment registered in FossBilling | invoice_id=%s", invoice_id)
 
+            try:
+                publish_invoice_status(
+                    invoice_id=invoice_id,
+                    identity_uuid=identity_uuid,
+                    status="paid",
+                    amount=amount or "0.00",
+                    correlation_id=msg_id,
+                    channel=channel,
+                )
+            except Exception as status_err:
+                logging.warning("[RECEIVER] invoice_status failed for payment_registered: %s", status_err)
+
             paid_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             confirmation_xml = build_payment_confirmed_xml(
                 invoice_id=invoice_id,
@@ -542,6 +597,7 @@ def process_message(
                 payment_method=payment_method_out,
                 paid_at=paid_at,
                 due_date=due_date,
+                correlation_id=msg_id,
             )
             send_message(
                 confirmation_xml,
@@ -650,6 +706,19 @@ def process_message(
             try:
                 credit_note_id = fossbilling_client.create_credit_note(invoice)
                 publish_invoice_cancelled(invoice_id, customer_id, channel=channel)
+                try:
+                    publish_invoice_status(
+                        invoice_id=invoice_id,
+                        identity_uuid=customer_id,
+                        status="cancelled",
+                        amount=str(invoice.get("total", "0.00")),
+                        correlation_id=msg_id,
+                        channel=channel,
+                    )
+                except Exception as status_err:
+                    logging.warning(
+                        "[RECEIVER] invoice_status failed for invoice_cancelled (credit note): %s", status_err
+                    )
                 send_log(
                     "info", "invoice",
                     f"Credit note {credit_note_id} created for paid registration invoice {invoice_id}",
@@ -678,6 +747,17 @@ def process_message(
             return
 
         publish_invoice_cancelled(invoice_id, customer_id, channel=channel)
+        try:
+            publish_invoice_status(
+                invoice_id=invoice_id,
+                identity_uuid=customer_id,
+                status="cancelled",
+                amount=str(invoice.get("total", "0.00")),
+                correlation_id=msg_id,
+                channel=channel,
+            )
+        except Exception as status_err:
+            logging.warning("[RECEIVER] invoice_status failed for invoice_cancelled: %s", status_err)
         send_log("info", "invoice", f"Invoice {invoice_id} cancelled", channel=channel)
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
