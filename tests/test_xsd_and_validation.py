@@ -2,7 +2,6 @@
 Tests voor XSD-validatie en duplicate detection.
 Consolideert: test_xsd.py + test_validate_message.py
 """
-import pytest
 import xml.etree.ElementTree as ET
 from src.services.rabbitmq_receiver import is_duplicate
 from src.utils.xml_validator import validate_xml

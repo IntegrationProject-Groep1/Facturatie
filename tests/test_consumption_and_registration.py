@@ -192,13 +192,6 @@ def test_extract_customer_data_names_from_contact_wrapper() -> None:
     assert data["last_name"] == "User"
 
 
-def test_extract_customer_data_fee() -> None:
-    root = ET.fromstring(_build_new_registration_xml())
-    data = extract_customer_data(root)
-    assert data["registration_fee"] == "150.00"
-    assert data["fee_currency"] == "eur"
-
-
 def test_extract_customer_data_address() -> None:
     root = ET.fromstring(_build_new_registration_xml())
     data = extract_customer_data(root)
@@ -320,7 +313,8 @@ class TestProcessMessageInvoiceRequest:
              patch.object(receiver.consumption_store, "update_meta_by_correlation_id",
                           create=True), \
              patch.object(receiver.consumption_store, "get_items_by_correlation_id",
-                          create=True, return_value=([{"title": "Cola", "price": "2.50", "quantity": 1}], [1], "company-001")), \
+                          create=True,
+                          return_value=([{"title": "Cola", "price": "2.50", "quantity": 1}], [1], "company-001")), \
              patch.object(receiver.consumption_store, "clear_by_ids", create=True), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
                    return_value="INV-001"), \
@@ -577,7 +571,7 @@ class TestProcessMessageEventEnded:
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
                    return_value="INV-001"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
-                   side_effect=lambda **kw: sent.append(kw) or "<xml/>") as mock_builder, \
+                   side_effect=lambda **kw: sent.append(kw) or "<xml/>"), \
              patch("src.services.rabbitmq_receiver.send_message"), \
              patch("src.services.rabbitmq_receiver.consumption_store.clear_by_ids"):
             process_message(channel, _make_method(), MagicMock(), body)

@@ -236,7 +236,8 @@ def build_payment_confirmed_xml(
     status: str = "paid",
     due_date: str = "",
     transaction_id: str = "",
-    payment_context: str = "online_invoice"
+    payment_context: str = "online_invoice",
+    correlation_id: str | None = None,
 ) -> str:
     """
     Builds a payment_registered confirmation XML to publish after a successful
@@ -266,6 +267,8 @@ def build_payment_confirmed_xml(
     ET.SubElement(header, "source").text = source
     ET.SubElement(header, "type").text = "payment_registered"
     ET.SubElement(header, "version").text = "2.0"
+    if correlation_id:
+        ET.SubElement(header, "correlation_id").text = correlation_id
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "identity_uuid").text = identity_uuid
@@ -435,6 +438,67 @@ def publish_cancellation_failed(
     logging.info(
         "[SENDER] cancellation_failed sent to '%s' | invoice_id=%s | reason=%s",
         CRM_QUEUE, invoice_id, reason,
+    )
+
+
+def build_invoice_status_xml(
+    invoice_id: str,
+    identity_uuid: str,
+    status: str,
+    amount: str,
+    correlation_id: str | None = None,
+) -> str:
+    """Builds an invoice_status XML message to notify CRM of a status change."""
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = "facturatie"
+    ET.SubElement(header, "type").text = "invoice_status"
+    ET.SubElement(header, "version").text = "2.0"
+    if correlation_id:
+        ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "invoice_id").text = invoice_id
+    ET.SubElement(body, "identity_uuid").text = identity_uuid
+    ET.SubElement(body, "status").text = status
+    amount_el = ET.SubElement(body, "amount")
+    amount_el.text = amount
+    amount_el.set("currency", "eur")
+
+    ET.indent(root, space="    ")
+    xml_str = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
+
+    from src.utils.xml_validator import validate_xml
+    is_valid, error_msg = validate_xml(xml_str, "invoice_status")
+    if not is_valid:
+        raise ValueError(f"[SENDER] invoice_status XSD validation failed: {error_msg}")
+
+    return xml_str
+
+
+def publish_invoice_status(
+    invoice_id: str,
+    identity_uuid: str,
+    status: str,
+    amount: str,
+    correlation_id: str | None = None,
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """Publishes an invoice_status notification to CRM on every status change."""
+    xml_message = build_invoice_status_xml(invoice_id, identity_uuid, status, amount, correlation_id)
+    send_message(xml_message, routing_key=CRM_QUEUE, channel=channel)
+    logging.info(
+        "[SENDER] invoice_status sent to '%s' | invoice_id=%s | status=%s",
+        CRM_QUEUE, invoice_id, status,
     )
 
 

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 from src.services.rabbitmq_sender import send_message
 
+
 def send_valid_registration():
     # Unieke ID's voor deze test-run
     msg_id = str(uuid.uuid4())
@@ -46,6 +47,7 @@ def send_valid_registration():
 
     print(f"[TEST] Sending message with email: user_{unique_suffix}@facturatie.be")
     send_message(xml_str, routing_key="crm.to.facturatie")
+
 
 if __name__ == "__main__":
     send_valid_registration()

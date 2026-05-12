@@ -178,3 +178,83 @@ Facturatie/
     ├── test_validate_message.py
     └── test_invoice_cancellation.py
 ```
+
+---
+
+## 2026-05-12 — Automated Communication Flows 2 & 3 + Lint Cleanup
+
+### Goal
+
+Fully automate all outgoing communication from the Facturatie service — removing the need for manual triggers. Three flows were reviewed and implemented:
+
+- **Flow 2 (CRM - Status):** Send `invoice_status` to CRM at every invoice status change.
+- **Flow 3 (CRM - Payment):** Confirm payment to CRM the moment an invoice reaches `paid` status.
+- **Lint cleanup:** Resolve all Flake8 warnings across scripts and test files.
+
+---
+
+### Flow 2 — `invoice_status` to CRM on every status change
+
+**Queue:** `crm.incoming`  
+**Message type:** `invoice_status`  
+**XSD:** `src/services/xsd/invoice_status.xsd`
+
+A `publish_invoice_status()` call was added at every point in `rabbitmq_receiver.py` where an invoice changes status:
+
+| Trigger | Status sent | Amount source |
+|---|---|---|
+| `new_registration` invoice created | `sent` | `registration_fee` from incoming message |
+| `invoice_request` invoice created | `sent` | computed from consumption items |
+| `event_ended` invoice created per company | `sent` | computed from consumption items |
+| `payment_registered` payment processed | `paid` | `amount_paid` from incoming message |
+| `invoice_cancelled` — unpaid registration | `cancelled` | `invoice.total` from FossBilling |
+| `invoice_cancelled` — paid registration (credit note) | `cancelled` | `invoice.total` from FossBilling |
+
+**New functions in `src/services/rabbitmq_sender.py`:**
+
+- `build_invoice_status_xml(invoice_id, identity_uuid, status, amount, correlation_id)` — builds and validates the XML against the invoice_status XSD.
+- `publish_invoice_status(...)` — sends the message to `crm.incoming`.
+
+All calls are wrapped in `try/except` — a failure does not block the main flow (logged as warning).
+
+---
+
+### Flow 3 — `payment_registered` confirmation to CRM
+
+**Queue:** `crm.incoming`  
+**Message type:** `payment_registered` (source: `facturatie`)
+
+This flow was already implemented via `build_payment_confirmed_xml()` in `rabbitmq_sender.py`. One gap was identified and fixed:
+
+- **Added `correlation_id` parameter** to `build_payment_confirmed_xml()`. The outgoing message now includes a `correlation_id` linking it back to the incoming `payment_registered` from Kassa/CRM.
+- The receiver passes `msg_id` as `correlation_id` when calling the function.
+
+---
+
+### Lint cleanup — Flake8 fixes
+
+All errors were resolved without suppression (`# noqa`). Summary by file:
+
+| File | Errors fixed |
+|---|---|
+| `src/services/rabbitmq_sender.py` | E303 — too many blank lines |
+| `scripts/mock_identity_service.py` | E402 — import after `load_dotenv()` |
+| `scripts/send_test_consumption_flow.py` | E402 — removed redundant `sys.path.insert` |
+| `scripts/send_test_invoice_cancelled.py` | F541 — f-strings without placeholders |
+| `scripts/send_test_payment.py` | E402, E221 — import order + aligned spacing |
+| `scripts/send_test_registration.py` | E402, E221 × 11, E302 + XSD fixes (see below) |
+| `tests/test_consumption_and_registration.py` | F811 duplicate test, E501 long line, F841 unused variable |
+| `tests/test_payment.py` | E302, E305, E261 × 2 |
+| `tests/test_registration.py` | E302, E305 |
+| `tests/test_sender.py` | F401 — `os` imported but unused |
+| `tests/test_xsd_and_validation.py` | F401 — `pytest` imported but unused |
+| `conftest.py` | W292 — no newline at end of file |
+
+**Additional fixes in `scripts/send_test_registration.py` (XSD correctness):**
+
+- `<user_id>` renamed to `<identity_uuid>` — matches the XSD field name.
+- `<session_id>` element removed — not present in the `new_registration` XSD.
+- `<correlation_id>` added to the message header — consistent with the company registration script.
+- Queue updated from `facturatie.incoming` to `crm.to.facturatie`.
+
+**Pattern for E402 fixes:** In scripts run with `python -m`, `sys.path.insert()` is redundant because `-m` already adds the project root to `sys.path`. Removing it allows all imports to move to the top of the file, resolving the E402 error cleanly.
