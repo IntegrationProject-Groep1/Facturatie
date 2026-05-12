@@ -26,7 +26,7 @@ QUEUE = "crm.incoming"
 def handle(channel, method, props, body):
     print("\n" + "=" * 60)
     try:
-        root = ET.fromstring(body.decode("utf-8"))
+        root = defused_fromstring(body)
         msg_type = root.findtext("header/type") or "unknown"
         msg_id = root.findtext("header/message_id") or "-"
         source = root.findtext("header/source") or "-"
