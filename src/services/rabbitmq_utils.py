@@ -87,39 +87,13 @@ def get_connection_with_retry(max_attempts: int = 5) -> pika.BlockingConnection:
             time.sleep(delay)
 
     raise Exception(f"[RABBITMQ] Could not connect after {max_attempts} attempts: {last_error}")
-    """
-    Creates a RabbitMQ connection using environment variables.
-
-    Environment variables:
-    - RABBITMQ_USER: RabbitMQ username
-    - RABBITMQ_PASSWORD: RabbitMQ password
-    - RABBITMQ_HOST: RabbitMQ host
-    - RABBITMQ_PORT: RabbitMQ port (default: 5672)
-    - RABBITMQ_VHOST: Virtual host (default: /)
-
-    Returns:
-        pika.BlockingConnection: Active connection to RabbitMQ
-    """
-    credentials = pika.PlainCredentials(
-        os.getenv("RABBITMQ_USER"),
-        os.getenv("RABBITMQ_PASSWORD")
-    )
-
-    parameters = pika.ConnectionParameters(
-        host=os.getenv("RABBITMQ_HOST"),
-        port=int(os.getenv("RABBITMQ_PORT", 5672)),
-        virtual_host=os.getenv("RABBITMQ_VHOST", "/"),
-        credentials=credentials
-    )
-
-    return pika.BlockingConnection(parameters)
 
 
 def send_to_dlq(
     channel: pika.channel.Channel,
     body: bytes,
     errors: list[str],
-    dlq_name: str = "errors.facturatie"
+    dlq_name: str = os.getenv("QUEUE_DLQ", "errors.facturatie")
 ) -> None:
     """
     Forwards an invalid or failed message to the Dead Letter Queue.
@@ -130,12 +104,11 @@ def send_to_dlq(
         errors: List of error messages explaining why the message was rejected
         dlq_name: DLQ queue name (default will be overridden by QUEUE_DLQ env var if set)
     """
-    dlq = os.getenv("QUEUE_DLQ", dlq_name)
 
-    channel.queue_declare(queue=dlq, durable=True)
+    channel.queue_declare(queue=dlq_name, durable=True)
     channel.basic_publish(
         exchange="",
-        routing_key=dlq,
+        routing_key=dlq_name,
         body=body,
         properties=pika.BasicProperties(
             delivery_mode=2,
