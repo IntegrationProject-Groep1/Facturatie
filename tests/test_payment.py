@@ -5,7 +5,7 @@ from src.services.rabbitmq_sender import send_message
 
 
 def mark_invoice_as_paid(invoice_id, amount="15.00"):
-    # UUID's genereren (moeten voldoen aan het regex patroon in de XSD)
+    # Generate UUIDs (must match the regex pattern in the XSD)
     msg_id = str(uuid.uuid4())
     corr_id = str(uuid.uuid4())
     trans_id = f"TRANS-{uuid.uuid4().hex[:8]}"
@@ -23,7 +23,7 @@ def mark_invoice_as_paid(invoice_id, amount="15.00"):
     ET.SubElement(header, "version").text = "2.0"
     ET.SubElement(header, "correlation_id").text = corr_id
 
-    # 2. Body (Moet voldoen aan PaymentRegisteredBodyType [cite: 10])
+    # 2. Body (Must conform to PaymentRegisteredBodyType [cite: 10])
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "payment_context").text = "consumption"
 
@@ -32,7 +32,7 @@ def mark_invoice_as_paid(invoice_id, amount="15.00"):
     ET.SubElement(invoice, "id").text = str(invoice_id)
     ET.SubElement(invoice, "status").text = "paid"  # Enumeration
 
-    # Amount paid (met verplichte currency code [cite: 12])
+    # Amount paid (with mandatory currency code [cite: 12])
     amount_paid = ET.SubElement(invoice, "amount_paid", currency="eur")
     amount_paid.text = amount
 
@@ -43,7 +43,7 @@ def mark_invoice_as_paid(invoice_id, amount="15.00"):
     ET.SubElement(transaction, "id").text = trans_id
     ET.SubElement(transaction, "payment_method").text = "online"  # Enumeration
 
-    # XML genereren
+    # Generate XML
     ET.indent(root, space="    ")
     xml_str = '<?xml version="1.0" encoding="UTF-8"?>' + ET.tostring(root, encoding="unicode")
 
