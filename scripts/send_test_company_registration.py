@@ -44,7 +44,7 @@ VAT_NUMBER = "BE0123456789"
 REGISTRATION_FEE = "250.00"
 FEE_CURRENCY = "eur"
 
-QUEUE = "crm.to.facturatie"
+QUEUE = "facturatie.incoming"
 
 # ─────────────────────────────────────────────────────────────────────────────
 

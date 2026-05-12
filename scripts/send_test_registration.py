@@ -1,12 +1,12 @@
 """
-Handmatig testscript — stuurt een new_registration bericht naar RabbitMQ.
+Manual test script — sends a new_registration message to RabbitMQ.
 
-Gebruik:
+Usage:
     python scripts/send_test_registration.py
 
-Vereisten:
-    - .env bestand met RabbitMQ connectiegegevens
-    - Receiver draait en luistert op QUEUE_INCOMING
+Requirements:
+    - .env file with RabbitMQ connection details
+    - Receiver is running and listening on QUEUE_INCOMING
 """
 import uuid
 import xml.etree.ElementTree as ET
@@ -17,7 +17,7 @@ from src.utils.xml_validator import validate_xml
 
 load_dotenv()
 
-# ── Testdata — pas hier aan naar wens ────────────────────────────────────────
+# ── Test data — adjust here as needed ────────────────────────────────────────
 
 MSG_ID = str(uuid.uuid4())
 CORRELATION_ID = str(uuid.uuid4())
@@ -29,15 +29,15 @@ EMAIL = f"testklant-{UNIQUE_SUFFIX}@voorbeeld.be"
 FIRST_NAME = "John"
 LAST_NAME = "Smith"
 DATE_OF_BIRTH = "1990-06-15"
-IS_COMPANY = False          # True = bedrijfsklant, False = particulier
-COMPANY_ID = ""             # Enkel nodig als IS_COMPANY = True
-COMPANY_NAME = ""           # Enkel nodig als IS_COMPANY = True
-VAT_NUMBER = ""             # Optioneel
+IS_COMPANY = False          # True = company client, False = individual
+COMPANY_ID = ""             # Only needed if IS_COMPANY = True
+COMPANY_NAME = ""           # Only needed if IS_COMPANY = True
+VAT_NUMBER = ""             # Optional
 
 REGISTRATION_FEE = "150.00"
 FEE_CURRENCY = "eur"
 
-QUEUE = "crm.to.facturatie"
+QUEUE = "facturatie.incoming"
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -82,33 +82,33 @@ def build_xml() -> str:
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")
 
 
-# ── Uitvoering ────────────────────────────────────────────────────────────────
+# ── Execution ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     xml = build_xml()
 
     print("=" * 60)
-    print("[TEST] Gegenereerde XML:")
+    print("[TEST] Generated XML:")
     print("=" * 60)
     print(xml)
     print("=" * 60)
 
-    # Valideer tegen XSD voor verzending
+    # Validate against XSD before sending
     is_valid, error = validate_xml(xml, "new_registration")
     if not is_valid:
-        print(f"\n[FOUT] XSD-validatie mislukt — bericht NIET verzonden:\n  {error}")
+        print(f"\n[ERROR] XSD validation failed — message NOT sent:\n  {error}")
         exit(1)
 
-    print("\n[OK] XSD-validatie geslaagd")
-    print(f"[TEST] Versturen naar queue: '{QUEUE}'")
+    print("\n[OK] XSD validation passed")
+    print(f"[TEST] Sending to queue: '{QUEUE}'")
     print(f"[TEST] Identity UUID: {IDENTITY_UUID}")
     print(f"[TEST] Email:         {EMAIL}")
-    print(f"[TEST] Naam:          {FIRST_NAME} {LAST_NAME}")
-    print(f"[TEST] Geboortedatum: {DATE_OF_BIRTH}")
-    print(f"[TEST] Bedrijf:       {'ja — ' + COMPANY_NAME if IS_COMPANY else 'nee'}")
-    print(f"[TEST] Bedrag:        {REGISTRATION_FEE} {FEE_CURRENCY.upper()}")
+    print(f"[TEST] Name:          {FIRST_NAME} {LAST_NAME}")
+    print(f"[TEST] Date of birth: {DATE_OF_BIRTH}")
+    print(f"[TEST] Company:       {'yes — ' + COMPANY_NAME if IS_COMPANY else 'no'}")
+    print(f"[TEST] Amount:        {REGISTRATION_FEE} {FEE_CURRENCY.upper()}")
     print(f"[TEST] message_id:    {MSG_ID}")
 
     send_message(xml, routing_key=QUEUE)
 
-    print("\n[OK] Bericht verzonden — controleer nu FossBilling en de receiver logs.")
+    print("\n[OK] Message sent — now check FossBilling and the receiver logs.")
