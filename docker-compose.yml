@@ -25,6 +25,25 @@ services:
       MYSQL_RANDOM_ROOT_PASSWORD: '1'
     volumes:
       - mysql:/var/lib/mysql
+  facturatie-dlq:
+    build: .
+    command: python -m src.services.dlq_consumer
+    restart: always
+    volumes:
+      - .:/app
+    environment:
+      - QUEUE_DLQ=errors.facturatie
+      - RABBITMQ_HOST=${RABBITMQ_HOST}
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST}
+      - MYSQL_HOST=mysql
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    depends_on:
+      - mysql
 volumes:
   fossbilling:
   mysql:
