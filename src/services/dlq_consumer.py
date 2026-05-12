@@ -1,4 +1,5 @@
 import logging
+import sys
 import os
 import defusedxml.ElementTree as ET
 
@@ -9,6 +10,8 @@ from dotenv import load_dotenv
 
 from src.services.rabbitmq_utils import get_connection
 from src.services.rabbitmq_sender import send_log
+
+logging.basicConfig(level=logging.INFO, format='%(message)s', handlers=[logging.StreamHandler(sys.stdout)])
 
 load_dotenv()
 
@@ -97,7 +100,7 @@ def process_dlq_message(
 
 def start_dlq_consumer(queue: str | None = None) -> None:
     if queue is None:
-        queue = os.getenv("QUEUE_DLQ", "facturatie.dlq")
+        queue = os.getenv("QUEUE_DLQ", "errors.facturatie")
 
     connection = get_connection()
     channel = connection.channel()
