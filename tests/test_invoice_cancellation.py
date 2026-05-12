@@ -1,6 +1,6 @@
 """
-Tests voor de invoice_cancelled message flow.
-Consolideert: test_invoice_cancellation.py + test_block_paid_invoice_cancellation.py
+Tests for the invoice_cancelled message flow.
+Consolidates: test_invoice_cancellation.py + test_block_paid_invoice_cancellation.py
 """
 import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock, patch
@@ -129,7 +129,7 @@ def test_cancellation_failed_xml_has_user_id_in_body():
     assert root.findtext("body/user_id") == "12345"
 
 
-# ── process_message integratie ────────────────────────────────────────────────
+# ── process_message integration ───────────────────────────────────────────────
 
 def test_fossbilling_failure_sends_to_dlq():
     channel = MagicMock()
@@ -257,7 +257,7 @@ def test_fossbilling_unreachable_sends_to_dlq():
 
 
 def test_empty_invoice_id_sends_to_dlq():
-    """Leeg invoice_id moet naar DLQ — niets om op te zoeken."""
+    """Empty invoice_id must go to DLQ — nothing to look up."""
     channel = MagicMock()
     body = _build_xml_bytes(invoice_id="")
 

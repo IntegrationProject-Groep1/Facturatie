@@ -1,13 +1,13 @@
 """
-Tests voor de invoice_request en new_registration message flows.
-Consolideert: test_consumption_order.py + test_process_new_registration.py
+Tests for the invoice_request and new_registration message flows.
+Consolidates: test_consumption_order.py + test_process_new_registration.py
 
-Belangrijke wijzigingen t.o.v. vorige versie:
-- invoice_request XML builder: oude <customer>/<items> structuur vervangen door
-  <user_id> + <invoice_data> conform contract §11.1
-- master_uuid verwijderd uit alle headers (contract #90)
-- consumption_store.save_items → save_invoice_request (nieuwe receiver logica)
-- Namen zitten in <contact> wrapper bij new_registration (contract Regel 2)
+Key changes compared to previous version:
+- invoice_request XML builder: old <customer>/<items> structure replaced by
+  <user_id> + <invoice_data> per contract §11.1
+- master_uuid removed from all headers (contract #90)
+- consumption_store.save_items → save_invoice_request (new receiver logic)
+- Names are in <contact> wrapper in new_registration (contract Rule 2)
 """
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -47,22 +47,22 @@ def mock_identity():
 def _build_invoice_request_xml(
     msg_id: str = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5",
     user_id: str = "BADGE-007",
-    company_name: str = "Bedrijf NV",
+    company_name: str = "Company NV",
     correlation_id: str = "corr-001",
     customer_type: str = "private",
     vat_number: str = "BE0123456789",
 ) -> bytes:
     """
-    Bouwt een invoice_request XML conform de nieuwe structuur (contract §11.1).
-    Geen master_uuid in header, geen <customer>/<items> blokken.
+    Builds an invoice_request XML conforming to the new structure (contract §11.1).
+    No master_uuid in header, no <customer>/<items> blocks.
     """
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     root = ET.Element("message")
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
-    # Volgorde conform XSD: message_id → type → source → timestamp → version → correlation_id
-    # master_uuid VERWIJDERD — verboden in alle headers (contract #90)
+    # Order per XSD: message_id → type → source → timestamp → version → correlation_id
+    # master_uuid REMOVED — forbidden in all headers (contract #90)
     ET.SubElement(header, "type").text = "invoice_request"
     ET.SubElement(header, "source").text = "crm"
     ET.SubElement(header, "timestamp").text = timestamp
@@ -83,7 +83,7 @@ def _build_invoice_request_xml(
     ET.SubElement(address, "street").text = "Teststraat"
     ET.SubElement(address, "number").text = "1"
     ET.SubElement(address, "postal_code").text = "1000"
-    ET.SubElement(address, "city").text = "Brussel"
+    ET.SubElement(address, "city").text = "Brussels"
     ET.SubElement(address, "country").text = "be"
 
     if company_name:
@@ -120,7 +120,7 @@ def _build_new_registration_xml() -> bytes:
         <last_name>User</last_name>
       </contact>
       <type>company</type>
-      <company_name>Test Bedrijf NV</company_name>
+      <company_name>Test Company NV</company_name>
       <vat_number>BE0123456789</vat_number>
       <company_id>comp-001</company_id>
       <session_id>sess-001</session_id>
@@ -185,7 +185,7 @@ def test_extract_customer_data_fee() -> None:
 
 
 def test_extract_customer_data_names_from_contact_wrapper() -> None:
-    """Namen worden gelezen via body/customer/contact/ (contract Regel 2)."""
+    """Names are read via body/customer/contact/ (contract Rule 2)."""
     root = ET.fromstring(_build_new_registration_xml())
     data = extract_customer_data(root)
     assert data["first_name"] == "Test"
@@ -304,7 +304,7 @@ class TestProcessConsumptionOrder:
 class TestProcessMessageInvoiceRequest:
 
     def test_happy_path_acks_message(self):
-        """Geldig invoice_request bericht → items ophalen, factuur maken, geacked."""
+        """Valid invoice_request message → fetch items, create invoice, acked."""
         channel = MagicMock()
         body = _build_invoice_request_xml(msg_id="11111111-1111-4111-1111-111111111111")
 
@@ -327,7 +327,7 @@ class TestProcessMessageInvoiceRequest:
         channel.basic_nack.assert_not_called()
 
     def test_user_id_and_correlation_id_saved(self):
-        """correlation_id wordt gebruikt om items op te halen uit de DB."""
+        """correlation_id is used to retrieve items from the DB."""
         channel = MagicMock()
         body = _build_invoice_request_xml(
             msg_id="11111111-1111-4111-1111-111111111112",
@@ -347,7 +347,7 @@ class TestProcessMessageInvoiceRequest:
         assert "corr-xyz" in args
 
     def test_missing_vat_number_sends_to_dlq(self):
-        """invoice_request met company_name maar zonder vat_number → DLQ."""
+        """invoice_request with company_name but without vat_number → DLQ."""
         channel = MagicMock()
         body = _build_invoice_request_xml(
             msg_id="11111111-1111-4111-1111-111111111113",
@@ -362,7 +362,7 @@ class TestProcessMessageInvoiceRequest:
         channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
 
     def test_db_failure_sends_to_dlq(self):
-        """DB fout bij ophalen items → DLQ en nack."""
+        """DB error when fetching items → DLQ and nack."""
         channel = MagicMock()
         body = _build_invoice_request_xml(msg_id="44444444-4444-4444-4444-444444444444")
 
@@ -464,7 +464,7 @@ class TestProcessMessageNewRegistration:
         assert "fossbilling_failed" in error_str
 
     def test_notification_uses_correlation_id_not_master_uuid(self) -> None:
-        """build_invoice_created_notification_xml moet correlation_id krijgen, geen master_uuid."""
+        """build_invoice_created_notification_xml must receive correlation_id, not master_uuid."""
         channel = self._make_channel()
         with patch("src.services.rabbitmq_receiver.create_registration_invoice",
                    return_value="INV-001"), \
@@ -492,7 +492,7 @@ class TestProcessMessageEventEnded:
              patch("src.services.rabbitmq_receiver.consumption_store.get_items_for_company",
                    return_value=([{"title": "Coca-Cola", "price": "2.50", "quantity": 1, "vat_rate": "21"}], [1])), \
              patch("src.services.rabbitmq_receiver.consumption_store.get_company_meta",
-                   return_value={"email": "info@bedrijf.be", "company_name": "Bedrijf NV"}), \
+                   return_value={"email": "info@company.be", "company_name": "Company NV"}), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
                    return_value="INV-2026-001"), \
              patch("src.services.rabbitmq_receiver.send_message"), \
@@ -555,7 +555,7 @@ class TestProcessMessageEventEnded:
         mock_clear.assert_called_once_with([42])
 
     def test_event_ended_uses_msg_id_as_correlation_id(self):
-        """Mailing notificatie moet correlation_id=msg_id krijgen, geen master_uuid."""
+        """Mailing notification must receive correlation_id=msg_id, not master_uuid."""
         channel = MagicMock()
         body = _build_event_ended_xml(msg_id="eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee")
         sent = []
