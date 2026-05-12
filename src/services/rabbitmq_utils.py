@@ -119,7 +119,7 @@ def send_to_dlq(
     channel: pika.channel.Channel,
     body: bytes,
     errors: list[str],
-    dlq_name: str = "facturatie.dlq"
+    dlq_name: str = "errors.facturatie"
 ) -> None:
     """
     Forwards an invalid or failed message to the Dead Letter Queue.
