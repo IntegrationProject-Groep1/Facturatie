@@ -527,11 +527,28 @@ def process_message(
                 invoice_id, amount, currency, payment_method, transaction_id
             )
 
-            success = pay_invoice(invoice_id, amount)
-            if not success:
-                raise Exception(f"Failed to register payment for invoice '{invoice_id}'")
+            invoice_data = fossbilling_client.get_invoice(invoice_id)
+            if invoice_data is None:
+                raise Exception(f"Invoice '{invoice_id}' not found in FossBilling")
 
-            logging.info("[RECEIVER] Payment registered in FossBilling | invoice_id=%s", invoice_id)
+            invoice_total = float(
+                invoice_data.get("total_with_tax") or invoice_data.get("total") or 0
+            )
+            payment_amount = float(amount) if amount else 0.0
+            is_full_payment = payment_amount >= invoice_total
+
+            if is_full_payment:
+                success = pay_invoice(invoice_id, amount)
+                if not success:
+                    raise Exception(f"Failed to register payment for invoice '{invoice_id}'")
+                invoice_status = "paid"
+                logging.info("[RECEIVER] Full payment registered in FossBilling | invoice_id=%s", invoice_id)
+            else:
+                invoice_status = "pending"
+                logging.info(
+                    "[RECEIVER] Partial payment for invoice '%s' | paid=%s < total=%s | status set to pending",
+                    invoice_id, payment_amount, invoice_total,
+                )
 
             paid_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             confirmation_xml = build_payment_confirmed_xml(
@@ -542,6 +559,7 @@ def process_message(
                 payment_method=payment_method_out,
                 paid_at=paid_at,
                 due_date=due_date,
+                status=invoice_status,
             )
             send_message(
                 confirmation_xml,

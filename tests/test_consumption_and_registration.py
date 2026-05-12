@@ -585,3 +585,129 @@ class TestProcessMessageEventEnded:
         assert len(sent) == 1
         assert sent[0]["correlation_id"] == "eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee"
         assert "master_uuid" not in sent[0]
+
+
+# ── process_message: payment_registered handler (partial payment) ─────────────
+
+def _build_payment_registered_xml(
+    msg_id: str = "cccccccc-cccc-4ccc-cccc-cccccccccccc",
+    invoice_id: str = "42",
+    amount: str = "300.00",
+    currency: str = "eur",
+    payment_method: str = "on_site",
+    due_date: str = "2026-12-31",
+) -> bytes:
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    root = ET.Element("message")
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = msg_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = "kassa"
+    ET.SubElement(header, "type").text = "payment_registered"
+    ET.SubElement(header, "version").text = "2.0"
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "identity_uuid").text = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    invoice = ET.SubElement(body, "invoice")
+    ET.SubElement(invoice, "id").text = invoice_id
+    amount_el = ET.SubElement(invoice, "amount_paid")
+    amount_el.text = amount
+    amount_el.set("currency", currency)
+    ET.SubElement(invoice, "status").text = "paid"
+    ET.SubElement(invoice, "due_date").text = due_date
+    ET.SubElement(body, "payment_context").text = "consumption"
+    transaction = ET.SubElement(body, "transaction")
+    ET.SubElement(transaction, "id").text = "TRANS-001"
+    ET.SubElement(transaction, "payment_method").text = payment_method
+    ET.indent(root, space="    ")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")).encode("utf-8")
+
+
+class TestPaymentRegisteredPartialPayment:
+
+    def _run(self, channel, body, invoice_total, pay_mock):
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+                   return_value={"id": "42", "total_with_tax": str(invoice_total)}), \
+             patch("src.services.rabbitmq_receiver.pay_invoice", pay_mock), \
+             patch("src.services.rabbitmq_receiver.send_message"):
+            process_message(channel, _make_method(), MagicMock(), body)
+
+    def test_full_payment_marks_invoice_paid(self):
+        """Amount == total → pay_invoice called, confirmation status='paid'."""
+        channel = MagicMock()
+        pay_mock = MagicMock(return_value=True)
+        self._run(channel, _build_payment_registered_xml(amount="400.00"), 400.0, pay_mock)
+
+        pay_mock.assert_called_once()
+        channel.basic_ack.assert_called_once_with(delivery_tag=1)
+
+    def test_overpayment_still_marks_invoice_paid(self):
+        """Amount > total → pay_invoice called (overpayment accepted)."""
+        channel = MagicMock()
+        pay_mock = MagicMock(return_value=True)
+        self._run(channel, _build_payment_registered_xml(amount="500.00"), 400.0, pay_mock)
+
+        pay_mock.assert_called_once()
+        channel.basic_ack.assert_called_once_with(delivery_tag=1)
+
+    def test_partial_payment_skips_pay_invoice(self):
+        """Amount < total → pay_invoice NOT called, status stays unpaid."""
+        channel = MagicMock()
+        pay_mock = MagicMock(return_value=True)
+        self._run(channel, _build_payment_registered_xml(amount="300.00"), 400.0, pay_mock)
+
+        pay_mock.assert_not_called()
+        channel.basic_ack.assert_called_once_with(delivery_tag=1)
+
+    def test_partial_payment_sends_unpaid_status_to_crm(self):
+        """Partial payment → confirmation XML sent to CRM has status='unpaid'."""
+        channel = MagicMock()
+        pay_mock = MagicMock(return_value=True)
+        sent_xmls = []
+
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+                   return_value={"id": "42", "total_with_tax": "400.00"}), \
+             patch("src.services.rabbitmq_receiver.pay_invoice", pay_mock), \
+             patch("src.services.rabbitmq_receiver.send_message",
+                   side_effect=lambda xml, **kw: sent_xmls.append(xml)):
+            process_message(channel, _make_method(), MagicMock(), _build_payment_registered_xml(amount="300.00"))
+
+        crm_xmls = [x for x in sent_xmls if ET.fromstring(x).findtext("header/type") == "payment_registered"]
+        assert crm_xmls, "No payment_registered confirmation sent"
+        status = ET.fromstring(crm_xmls[0]).findtext("body/invoice/status")
+        assert status == "pending"
+
+    def test_full_payment_sends_paid_status_to_crm(self):
+        """Full payment → confirmation XML sent to CRM has status='paid'."""
+        channel = MagicMock()
+        sent_xmls = []
+
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+                   return_value={"id": "42", "total_with_tax": "400.00"}), \
+             patch("src.services.rabbitmq_receiver.pay_invoice", return_value=True), \
+             patch("src.services.rabbitmq_receiver.send_message",
+                   side_effect=lambda xml, **kw: sent_xmls.append(xml)):
+            process_message(channel, _make_method(), MagicMock(), _build_payment_registered_xml(amount="400.00"))
+
+        crm_xmls = [x for x in sent_xmls if ET.fromstring(x).findtext("header/type") == "payment_registered"]
+        assert crm_xmls, "No payment_registered confirmation sent"
+        status = ET.fromstring(crm_xmls[0]).findtext("body/invoice/status")
+        assert status == "paid"
+
+    def test_invoice_not_found_sends_to_dlq(self):
+        """Invoice not found in FossBilling → DLQ and nack."""
+        channel = MagicMock()
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+                   return_value=None), \
+             patch("src.services.rabbitmq_receiver.send_message"):
+            process_message(channel, _make_method(), MagicMock(), _build_payment_registered_xml())
+
+        channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
+        channel.basic_ack.assert_not_called()
