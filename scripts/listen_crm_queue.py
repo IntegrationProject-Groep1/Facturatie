@@ -14,6 +14,7 @@ Then in another terminal send a trigger, e.g.:
 Press CTRL+C to stop.
 """
 import xml.etree.ElementTree as ET
+from defusedxml.ElementTree import fromstring as defused_fromstring
 from dotenv import load_dotenv
 from src.services.rabbitmq_utils import get_connection
 
