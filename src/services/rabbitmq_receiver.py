@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import fromstring as defused_fromstring
 from datetime import datetime, timezone
 import re
+from decimal import Decimal
 
 from .fossbilling_api import create_registration_invoice, pay_invoice
 from .rabbitmq_sender import (
@@ -570,11 +571,28 @@ def process_message(
                 invoice_id, amount, currency, payment_method, transaction_id
             )
 
-            success = pay_invoice(invoice_id, amount)
-            if not success:
-                raise Exception(f"Failed to register payment for invoice '{invoice_id}'")
+            invoice_data = fossbilling_client.get_invoice(invoice_id)
+            if invoice_data is None:
+                raise Exception(f"Invoice '{invoice_id}' not found in FossBilling")
 
-            logging.info("[RECEIVER] Payment registered in FossBilling | invoice_id=%s", invoice_id)
+            invoice_total = Decimal(
+                invoice_data.get("total_with_tax") or invoice_data.get("total") or 0
+            )
+            payment_amount = Decimal(amount) if amount else 0.0
+            is_full_payment = payment_amount >= invoice_total
+
+            if is_full_payment:
+                success = pay_invoice(invoice_id, amount)
+                if not success:
+                    raise Exception(f"Failed to register payment for invoice '{invoice_id}'")
+                invoice_status = "paid"
+                logging.info("[RECEIVER] Full payment registered in FossBilling | invoice_id=%s", invoice_id)
+            else:
+                invoice_status = "pending"
+                logging.info(
+                    "[RECEIVER] Partial payment for invoice '%s' | paid=%s < total=%s | status set to pending",
+                    invoice_id, payment_amount, invoice_total,
+                )
 
             try:
                 publish_invoice_status(
@@ -597,6 +615,7 @@ def process_message(
                 payment_method=payment_method_out,
                 paid_at=paid_at,
                 due_date=due_date,
+                status=invoice_status,
                 correlation_id=msg_id,
             )
             send_message(
