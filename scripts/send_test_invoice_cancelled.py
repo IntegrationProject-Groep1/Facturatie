@@ -1,11 +1,11 @@
 """
-Test de 3 scenario's voor invoice_cancelled:
+Test the 3 scenarios for invoice_cancelled:
 
-  Scenario 1: Paid registratiefactuur  → creditnota aangemaakt in FossBilling
-  Scenario 2: Paid consumptiefactuur   → geblokkeerd (consumption_invoice_already_paid)
-  Scenario 3: Unpaid factuur           → factuur geannuleerd in FossBilling
+  Scenario 1: Paid registration invoice  → credit note created in FossBilling
+  Scenario 2: Paid consumption invoice   → blocked (consumption_invoice_cannot_be_cancelled)
+  Scenario 3: Unpaid invoice             → invoice cancelled in FossBilling
 
-Pas de INVOICE IDs aan naar bestaande facturen in FossBilling voor je test.
+Adjust the INVOICE IDs to existing invoices in FossBilling before testing.
 
 Run:
     python -m scripts.send_test_invoice_cancelled
@@ -15,16 +15,16 @@ import uuid
 from datetime import datetime, timezone
 from src.services.rabbitmq_sender import send_message
 
-QUEUE = "crm.to.facturatie"
+QUEUE = "facturatie.incoming"
 
-# Scenario 1: een PAID factuur met item "Inschrijvingskosten" (registratie)
-PAID_REGISTRATION_INVOICE_ID = "64"
+# Scenario 1: a PAID invoice with item "Inschrijvingskosten" (registration)
+PAID_REGISTRATION_INVOICE_ID = "185"
 
-# Scenario 2: een PAID consumptiefactuur (bv. Duvel/Bitterballen items)
-PAID_CONSUMPTION_INVOICE_ID = "62"
+# Scenario 2: a PAID consumption invoice (e.g. Duvel/Bitterballen items)
+PAID_CONSUMPTION_INVOICE_ID = "181"
 
-# Scenario 3: een UNPAID registratiefactuur
-UNPAID_INVOICE_ID = "68"
+# Scenario 3: an UNPAID registration invoice
+UNPAID_INVOICE_ID = "184"
 
 IDENTITY_UUID = str(uuid.uuid4())
 # ─────────────────────────────────────────────────────────────────────────────
@@ -62,40 +62,40 @@ def run_scenario(number: int, description: str, invoice_id: str, reason: str = "
     print("="*60)
     xml = build_invoice_cancelled(invoice_id, reason)
     send_message(xml, routing_key=QUEUE)
-    print(f"[OK] Verstuurd naar {QUEUE}")
+    print(f"[OK] Sent to {QUEUE}")
 
 
 if __name__ == "__main__":
-    print("Invoice Cancelled Test — 3 scenario's")
+    print("Invoice Cancelled Test — 3 scenarios")
 
     run_scenario(
         1,
-        "Paid registratiefactuur → verwacht: creditnota in FossBilling",
+        "Paid registration invoice → expected: credit note in FossBilling",
         PAID_REGISTRATION_INVOICE_ID,
-        reason="Deelnemer uitgeschreven",
+        reason="Participant unregistered",
     )
 
-    input("\nDruk Enter voor scenario 2...")
+    input("\nPress Enter for scenario 2...")
 
     run_scenario(
         2,
-        "Paid consumptiefactuur → verwacht: cancellation_failed (consumption_invoice_cannot_be_cancelled)",
+        "Paid consumption invoice → expected: cancellation_failed (consumption_invoice_cannot_be_cancelled)",
         PAID_CONSUMPTION_INVOICE_ID,
-        reason="Test blokkering consumptie",
+        reason="Test consumption blocking",
     )
 
-    input("\nDruk Enter voor scenario 3...")
+    input("\nPress Enter for scenario 3...")
 
     run_scenario(
         3,
-        "Unpaid factuur → verwacht: factuur geannuleerd in FossBilling",
+        "Unpaid invoice → expected: invoice cancelled in FossBilling",
         UNPAID_INVOICE_ID,
-        reason="Test annulering",
+        reason="Test cancellation",
     )
 
     print("\n" + "="*60)
-    print("Klaar. Controleer:")
-    print(f"  Scenario 1 → FossBilling: nieuwe creditnota factuur zichtbaar")
-    print(f"  Scenario 2 → Receiver log: 'consumption_invoice_cannot_be_cancelled'")
-    print(f"  Scenario 3 → FossBilling: factuur {UNPAID_INVOICE_ID} status = cancelled")
+    print("Done. Check:")
+    print("  Scenario 1 → FossBilling: new credit note invoice visible")
+    print("  Scenario 2 → Receiver log: 'consumption_invoice_cannot_be_cancelled'")
+    print(f"  Scenario 3 → FossBilling: invoice {UNPAID_INVOICE_ID} status = cancelled")
     print("="*60)

@@ -1,29 +1,24 @@
 """
-Testscript voor de consumption_order → invoice_request → event_ended flow.
+Test script for the consumption_order → invoice_request → event_ended flow.
 
-Stuurt berichten in de juiste volgorde:
-  1. consumption_order per badge (items worden opgeslagen in MySQL)
-  2. invoice_request voor één specifieke consumption_order (factuur wordt aangemaakt)
-  3. event_ended (resterende items zonder invoice_request worden gefactureerd)
+Sends messages in the correct order:
+  1. consumption_order per badge (items are saved in MySQL)
+  2. invoice_request for one specific consumption_order (invoice is created)
+  3. event_ended (remaining items without invoice_request are invoiced)
 
 Run:
     python -m scripts.send_test_consumption_flow
 
-Vereisten:
-  - RabbitMQ draait
-  - Receiver draait (python -m src.services.rabbitmq_receiver)
-  - MySQL draait
-  - .env correct ingesteld
+Requirements:
+  - RabbitMQ is running
+  - Receiver is running (python -m src.main)
+  - MySQL is running
+  - .env correctly configured
 """
 
-import sys
 import time
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from src.services.rabbitmq_sender import send_message
 
 QUEUE = "facturatie.incoming"
@@ -153,17 +148,17 @@ def build_event_ended() -> str:
 
 # ── Test data ─────────────────────────────────────────────────────────────────
 #
-# Groepeertest: BADGE-001 en BADGE-002 bestellen allebei "Koffie" voor hetzelfde
-# bedrijf. Op de factuur moet dat samengevoegd worden tot één regel Koffie ×5.
+# Grouping test: BADGE-001 and BADGE-002 both order "Coffee" for the same
+# company. On the invoice that should be merged into one Coffee ×5 line.
 #
-# Bedrijf NV (bedrijf-nv-001):
-#   BADGE-001: Coca-Cola ×2 (€2.50), Koffie ×2 (€1.50)  ← Koffie wordt gegroepeerd
-#   BADGE-002: Koffie ×3 (€1.50), Fanta ×1 (€2.50)      ← Koffie wordt gegroepeerd
-#   → verwachte factuurregels via invoice_request: Coca-Cola ×2, Koffie ×5, Fanta ×1
+# Company NV (bedrijf-nv-001):
+#   BADGE-001: Coca-Cola ×2 (€2.50), Coffee ×2 (€1.50)  ← Coffee is grouped
+#   BADGE-002: Coffee ×3 (€1.50), Fanta ×1 (€2.50)      ← Coffee is grouped
+#   → expected invoice lines via invoice_request: Coca-Cola ×2, Coffee ×5, Fanta ×1
 #
 # Tech Corp (tech-corp-001):
-#   BADGE-003: Cola ×1 (€2.50), Koffie ×2 (€1.50)
-#   → verwachte factuurregels via event_ended: Cola ×1, Koffie ×2
+#   BADGE-003: Cola ×1 (€2.50), Coffee ×2 (€1.50)
+#   → expected invoice lines via event_ended: Cola ×1, Coffee ×2
 
 ORDER_ID_BADGE_001 = str(uuid.uuid4())
 USER_ID_BADGE_001 = str(uuid.uuid4())
@@ -175,10 +170,10 @@ ORDER_ID_BADGE_003 = str(uuid.uuid4())
 USER_ID_BADGE_003 = str(uuid.uuid4())
 
 
-# ── Stap 1: consumption_orders versturen ──────────────────────────────────────
+# ── Step 1: send consumption_orders ──────────────────────────────────────────
 
 print("=" * 60)
-print("STAP 1 — consumption_orders versturen")
+print("STEP 1 — send consumption_orders")
 print("=" * 60)
 
 xml = build_consumption_order(
@@ -188,11 +183,11 @@ xml = build_consumption_order(
     email="jan.peeters@bedrijf.com",
     items=[
         {"description": "Coca-Cola", "price": "2.50", "quantity": 2, "vat_rate": 21},
-        {"description": "Koffie",    "price": "1.50", "quantity": 2, "vat_rate": 21},
+        {"description": "Coffee",    "price": "1.50", "quantity": 2, "vat_rate": 21},
     ],
 )
 send_message(xml, routing_key=QUEUE)
-print(f"[OK] consumption_order BADGE-001 | Coca-Cola ×2, Koffie ×2 | message_id={ORDER_ID_BADGE_001}")
+print(f"[OK] consumption_order BADGE-001 | Coca-Cola ×2, Coffee ×2 | message_id={ORDER_ID_BADGE_001}")
 
 time.sleep(1)
 
@@ -202,13 +197,13 @@ xml = build_consumption_order(
     identity_uuid=USER_ID_BADGE_002,
     email="marie.janssen@bedrijf.com",
     items=[
-        {"description": "Koffie", "price": "1.50", "quantity": 3, "vat_rate": 21},
+        {"description": "Coffee", "price": "1.50", "quantity": 3, "vat_rate": 21},
         {"description": "Fanta",  "price": "2.50", "quantity": 1, "vat_rate": 21},
     ],
 )
 send_message(xml, routing_key=QUEUE)
-print(f"[OK] consumption_order BADGE-002 | Koffie ×3, Fanta ×1 | message_id={ORDER_ID_BADGE_002}")
-print("     (Koffie van BADGE-001 en BADGE-002 moet worden samengevoegd → ×5)")
+print(f"[OK] consumption_order BADGE-002 | Coffee ×3, Fanta ×1 | message_id={ORDER_ID_BADGE_002}")
+print("     (Coffee from BADGE-001 and BADGE-002 should be merged → ×5)")
 
 time.sleep(1)
 
@@ -219,24 +214,24 @@ xml = build_consumption_order(
     email="piet.janssen@techcorp.be",
     items=[
         {"description": "Cola",   "price": "2.50", "quantity": 1, "vat_rate": 21},
-        {"description": "Koffie", "price": "1.50", "quantity": 2, "vat_rate": 21},
+        {"description": "Coffee", "price": "1.50", "quantity": 2, "vat_rate": 21},
     ],
 )
 send_message(xml, routing_key=QUEUE)
-print(f"[OK] consumption_order BADGE-003 | Cola ×1, Koffie ×2 | message_id={ORDER_ID_BADGE_003}")
+print(f"[OK] consumption_order BADGE-003 | Cola ×1, Coffee ×2 | message_id={ORDER_ID_BADGE_003}")
 
 print()
-print("Wachten 3 seconden zodat de receiver alle orders kan opslaan...")
+print("Waiting 3 seconds for the receiver to save all orders...")
 time.sleep(3)
 
-# ── Stap 2: invoice_request voor Bedrijf NV (via BADGE-001) ───────────────────
+# ── Step 2: invoice_request for Company NV (via BADGE-001) ────────────────────
 #
-# get_items_by_correlation_id pikt ALLE items van bedrijf-nv-001 op
-# (dus zowel BADGE-001 als BADGE-002). De Koffie-regels moeten gegroepeerd worden.
+# get_items_by_correlation_id picks up ALL items for bedrijf-nv-001
+# (so both BADGE-001 and BADGE-002). The Coffee lines should be grouped.
 
 print("=" * 60)
-print("STAP 2 — invoice_request voor Bedrijf NV (via BADGE-001)")
-print("         Verwacht op factuur: Coca-Cola ×2, Koffie ×5 [gegroepeerd!], Fanta ×1")
+print("STEP 2 — invoice_request for Company NV (via BADGE-001)")
+print("         Expected on invoice: Coca-Cola ×2, Coffee ×5 [grouped!], Fanta ×1")
 print("=" * 60)
 
 xml = build_invoice_request(
@@ -249,33 +244,33 @@ xml = build_invoice_request(
     vat_number="BE0123456789",
 )
 send_message(xml, routing_key=QUEUE)
-print(f"[OK] invoice_request voor Bedrijf NV | correlation_id={ORDER_ID_BADGE_001}")
+print(f"[OK] invoice_request for Company NV | correlation_id={ORDER_ID_BADGE_001}")
 
 print()
-print("Wachten 3 seconden zodat de receiver de factuur kan aanmaken...")
+print("Waiting 3 seconds for the receiver to create the invoice...")
 time.sleep(3)
 
-# ── Stap 3: event_ended ───────────────────────────────────────────────────────
+# ── Step 3: event_ended ───────────────────────────────────────────────────────
 #
-# Bedrijf NV is al volledig verwerkt in stap 2.
-# Tech Corp (BADGE-003) heeft nog geen invoice_request gehad → wordt hier gefactureerd.
+# Company NV has already been fully processed in step 2.
+# Tech Corp (BADGE-003) has not had an invoice_request yet → is invoiced here.
 
 print("=" * 60)
-print("STAP 3 — event_ended versturen")
-print("         Verwacht: factuur voor Tech Corp | Cola ×1, Koffie ×2")
-print("         Bedrijf NV: al verwerkt in stap 2, geen nieuwe factuur verwacht")
+print("STEP 3 — send event_ended")
+print("         Expected: invoice for Tech Corp | Cola ×1, Coffee ×2")
+print("         Company NV: already processed in step 2, no new invoice expected")
 print("=" * 60)
 
 xml = build_event_ended()
 send_message(xml, routing_key=QUEUE)
-print("[OK] event_ended verstuurd")
+print("[OK] event_ended sent")
 
 print()
 print("=" * 60)
-print("Klaar. Controleer:")
-print("  - FossBilling: 2 facturen verwacht")
-print("    • Bedrijf NV → Coca-Cola ×2, Koffie ×5 [BADGE-001+002 gegroepeerd], Fanta ×1")
-print("    • Tech Corp  → Cola ×1, Koffie ×2  (via event_ended)")
-print("  - RabbitMQ facturatie.to.mailing: 2 mailing berichten verwacht")
-print("  - MySQL pending_consumptions: leeg na verwerking")
+print("Done. Check:")
+print("  - FossBilling: 2 invoices expected")
+print("    • Company NV → Coca-Cola ×2, Coffee ×5 [BADGE-001+002 grouped], Fanta ×1")
+print("    • Tech Corp  → Cola ×1, Coffee ×2  (via event_ended)")
+print("  - RabbitMQ facturatie.to.mailing: 2 mailing messages expected")
+print("  - MySQL pending_consumptions: empty after processing")
 print("=" * 60)

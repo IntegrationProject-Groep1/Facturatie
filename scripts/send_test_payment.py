@@ -1,31 +1,26 @@
 """
-Testscript voor de payment_registered flow.
+Test script for the payment_registered flow.
 
-Stuurt een payment_registered bericht naar de receiver die dan:
-  1. De betaling registreert in FossBilling (factuur op 'paid' zetten)
-  2. Een bevestiging stuurt naar facturatie.to.crm
+Sends a payment_registered message to the receiver which then:
+  1. Registers the payment in FossBilling (sets invoice to 'paid')
+  2. Sends a confirmation to crm.incoming
 
-Pas INVOICE_ID aan naar een bestaande factuur-ID uit FossBilling.
+Change INVOICE_ID to an existing invoice ID in FossBilling.
 
 Run:
     python -m scripts.send_test_payment
 """
 
-import sys
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from src.services.rabbitmq_sender import send_message
 
 QUEUE = "facturatie.incoming"
 
-# ── Pas dit aan ───────────────────────────────────────────────────────────────
-INVOICE_ID     = "14"               # ID van een bestaande factuur in FossBilling
-AMOUNT         = "150.00"           # Bedrag dat betaald wordt
-IDENTITY_UUID  = str(uuid.uuid4())  # Optioneel — klant UUID (laat leeg voor anoniem)
+# ── Adjust this ───────────────────────────────────────────────────────────────
+INVOICE_ID = "185"               # ID of an existing invoice in FossBilling
+AMOUNT = "150.00"               # Amount being paid
+IDENTITY_UUID = str(uuid.uuid4())  # Optional — customer UUID (leave empty for anonymous)
 # ─────────────────────────────────────────────────────────────────────────────
 
 PAYMENT_METHOD = "on_site"   # on_site | online | company_link
@@ -82,10 +77,10 @@ if __name__ == "__main__":
     )
 
     print("=" * 60)
-    print("[TEST] Versturen payment_registered")
+    print("[TEST] Sending payment_registered")
     print(f"[TEST] Invoice ID:      {INVOICE_ID}")
-    print(f"[TEST] Bedrag:          {AMOUNT} EUR")
-    print(f"[TEST] Betaalmethode:   {PAYMENT_METHOD}")
+    print(f"[TEST] Amount:          {AMOUNT} EUR")
+    print(f"[TEST] Payment method:  {PAYMENT_METHOD}")
     print(f"[TEST] Queue:           {QUEUE}")
     print("=" * 60)
     print(xml)
@@ -93,7 +88,7 @@ if __name__ == "__main__":
 
     send_message(xml, routing_key=QUEUE)
 
-    print("\n[OK] Bericht verstuurd. Controleer:")
-    print(f"  - FossBilling: factuur {INVOICE_ID} moet status 'paid' hebben")
-    print("  - RabbitMQ facturatie.to.crm: bevestigingsbericht verwacht")
-    print("  - Receiver logs: geen errors")
+    print("\n[OK] Message sent. Check:")
+    print(f"  - FossBilling: invoice {INVOICE_ID} should have status 'paid'")
+    print("  - RabbitMQ crm.incoming: confirmation message expected")
+    print("  - Receiver logs: no errors")

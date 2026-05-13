@@ -2,7 +2,7 @@ import uuid
 import time
 from src.services.rabbitmq_sender import send_message
 
-QUEUE = "crm.to.facturatie"
+QUEUE = "facturatie.incoming"
 COMPANY_ID = "COMP-TEST-001"
 ORDER_ID = str(uuid.uuid4())
 
@@ -48,7 +48,7 @@ def send_consumption_order():
     </body>
 </message>"""
     send_message(xml, routing_key=QUEUE)
-    print(f"[1/2] consumption_order verzonden | company={COMPANY_ID} | order_id={ORDER_ID}")
+    print(f"[1/2] consumption_order sent | company={COMPANY_ID} | order_id={ORDER_ID}")
 
 
 def send_event_ended():
@@ -67,12 +67,12 @@ def send_event_ended():
     </body>
 </message>"""
     send_message(xml, routing_key=QUEUE)
-    print("[2/2] event_ended verzonden")
+    print("[2/2] event_ended sent")
 
 
 if __name__ == "__main__":
     send_consumption_order()
     time.sleep(2)
     send_event_ended()
-    print("\nKlaar. Controleer FossBilling op https://facturatie.desiderius.me/admin")
-    print(f"Zoek op client: {COMPANY_ID} — factuur moet zichtbaar zijn onder Invoices")
+    print("\nDone. Check FossBilling at https://facturatie.desiderius.me/admin")
+    print(f"Search for client: {COMPANY_ID} — invoice should be visible under Invoices")

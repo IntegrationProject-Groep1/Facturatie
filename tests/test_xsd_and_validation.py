@@ -1,8 +1,7 @@
 """
-Tests voor XSD-validatie en duplicate detection.
-Consolideert: test_xsd.py + test_validate_message.py
+Tests for XSD validation and duplicate detection.
+Consolidates: test_xsd.py + test_validate_message.py
 """
-import pytest
 import xml.etree.ElementTree as ET
 from src.services.rabbitmq_receiver import is_duplicate
 from src.utils.xml_validator import validate_xml
@@ -20,15 +19,15 @@ def build_invoice_request_xml(
     correlation_id: str | None = None,
 ) -> str:
     """
-    Bouwt een invoice_request XML conform de nieuwe structuur (contract §11.1).
-    Geen master_uuid in header, body heeft user_id + invoice_data (geen items/customer blok).
+    Builds an invoice_request XML conforming to the new structure (contract §11.1).
+    No master_uuid in header, body has user_id + invoice_data (no items/customer block).
     """
     root = ET.Element("message")
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
-    # Volgorde conform XSD: message_id → type → source → timestamp → version → correlation_id
-    # master_uuid VERWIJDERD — verboden in alle headers (contract #90)
+    # Order per XSD: message_id → type → source → timestamp → version → correlation_id
+    # master_uuid REMOVED — forbidden in all headers (contract #90)
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
     ET.SubElement(header, "type").text = "invoice_request"
@@ -36,14 +35,14 @@ def build_invoice_request_xml(
     if correlation_id:
         ET.SubElement(header, "correlation_id").text = correlation_id
     else:
-        ET.SubElement(header, "correlation_id").text = str(uuid.uuid4())  # verplicht veld
+        ET.SubElement(header, "correlation_id").text = str(uuid.uuid4())  # mandatory field
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "identity_uuid").text = str(uuid.uuid4())
 
     invoice_data = ET.SubElement(body, "invoice_data")
 
-    # contact-blok conform InvoiceDataType XSD
+    # contact block per InvoiceDataType XSD
     contact = ET.SubElement(invoice_data, "contact")
     ET.SubElement(contact, "first_name").text = "Jan"
     ET.SubElement(contact, "last_name").text = "De Tester"
@@ -54,7 +53,7 @@ def build_invoice_request_xml(
     ET.SubElement(address, "street").text = "Kiekenmarkt"
     ET.SubElement(address, "number").text = "42"
     ET.SubElement(address, "postal_code").text = "1000"
-    ET.SubElement(address, "city").text = "Brussel"
+    ET.SubElement(address, "city").text = "Brussels"
     ET.SubElement(address, "country").text = "be"
 
     ET.SubElement(invoice_data, "company_name").text = "Test Corp"
@@ -80,7 +79,7 @@ def build_new_registration_xml(
     ET.SubElement(header, "source").text = source
     ET.SubElement(header, "type").text = "new_registration"
     ET.SubElement(header, "version").text = version
-    ET.SubElement(header, "correlation_id").text = correlation_id or str(uuid.uuid4())  # verplicht
+    ET.SubElement(header, "correlation_id").text = correlation_id or str(uuid.uuid4())  # mandatory
 
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")
@@ -96,10 +95,9 @@ def build_new_registration_xml(
     ET.SubElement(contact, "last_name").text = "User"
 
     ET.SubElement(customer, "type").text = "company"
-    ET.SubElement(customer, "company_name").text = "Test Bedrijf NV"
+    ET.SubElement(customer, "company_name").text = "Test Company NV"
     ET.SubElement(customer, "vat_number").text = "BE0123456789"
     ET.SubElement(customer, "company_id").text = "comp-001"
-    ET.SubElement(customer, "session_id").text = "sess-001"
 
     payment_due = ET.SubElement(customer, "payment_due")
     amount_el = ET.SubElement(payment_due, "amount", {"currency": "eur"})
@@ -138,9 +136,9 @@ def test_valid_invoice_request() -> None:
 
 
 def test_invalid_vat_rate_returns_error() -> None:
-    """vat_rate 99 is geen geldige enum-waarde — validatie moet falen."""
-    # invoice_request heeft geen vat_rate meer in de body (items zitten er niet meer in),
-    # maar we testen of een bewust kapot bericht correct wordt geweigerd
+    """vat_rate 99 is not a valid enum value — validation must fail."""
+    # invoice_request no longer has vat_rate in the body (items are no longer included),
+    # but we test whether a deliberately broken message is correctly rejected
     root = ET.fromstring(build_invoice_request_xml())
     body = root.find("body")
     identity_uuid = body.find("identity_uuid")
@@ -165,7 +163,7 @@ def test_new_registration_missing_email() -> None:
 
 
 def test_new_registration_no_master_uuid_in_header() -> None:
-    """master_uuid mag nooit in de header zitten — XSD moet dit weigeren."""
+    """master_uuid must never be in the header — XSD must reject this."""
     root = ET.fromstring(build_new_registration_xml())
     header = root.find("header")
     master = ET.SubElement(header, "master_uuid")
@@ -184,7 +182,7 @@ def test_valid_event_ended() -> None:
 
 
 def test_event_ended_invalid_date() -> None:
-    xml = build_event_ended_xml(timestamp="NIET-EEN-DATUM")
+    xml = build_event_ended_xml(timestamp="NOT-A-DATE")
     is_valid, errors = validate_xml(xml, "event_ended")
     assert is_valid is False
 
@@ -220,7 +218,7 @@ def test_valid_payment_registered_kassa() -> None:
 
 
 def test_valid_payment_registered_anonymous() -> None:
-    """Anonieme betaling (geen identity_uuid) moet nu geldig zijn (v2.3-12)."""
+    """Anonymous payment (no identity_uuid) must now be valid (v2.3-12)."""
     xml = """<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>

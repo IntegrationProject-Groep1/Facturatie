@@ -1,8 +1,7 @@
 """
-Tests voor rabbitmq_sender XML builders.
-Consolideert: test_invoice_request.py (volledig herschreven aan nieuwe XSD)
+Tests for rabbitmq_sender XML builders.
+Consolidates: test_invoice_request.py (fully rewritten to new XSD)
 """
-import os
 import re
 import xml.etree.ElementTree as ET
 import pytest
@@ -10,6 +9,7 @@ from unittest.mock import patch
 
 from src.services.rabbitmq_sender import (
     build_invoice_created_notification_xml,
+    build_invoice_status_xml,
     build_payment_confirmed_xml,
 )
 
@@ -128,9 +128,21 @@ def test_payment_source(payment_xml) -> None:
     assert parse(payment_xml).findtext("header/source") == "facturatie"
 
 
-def test_payment_no_correlation_id(payment_xml) -> None:
-    """Outgoing payment_registered heeft geen correlation_id (contract §8.2)."""
+def test_payment_no_correlation_id_when_not_passed(payment_xml) -> None:
     assert parse(payment_xml).findtext("header/correlation_id") is None
+
+
+def test_payment_correlation_id_included_when_passed() -> None:
+    with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
+        xml = build_payment_confirmed_xml(
+            invoice_id=INVOICE_ID,
+            identity_uuid=CUSTOMER_ID,
+            amount="150.00",
+            currency="eur",
+            payment_method="online",
+            correlation_id=CORRELATION_ID,
+        )
+    assert parse(xml).findtext("header/correlation_id") == CORRELATION_ID
 
 
 def test_payment_no_master_uuid(payment_xml) -> None:
@@ -178,4 +190,98 @@ def test_payment_xsd_validation_error_raises() -> None:
                 amount="100.00",
                 currency="eur",
                 payment_method="card",
+            )
+
+
+# ── build_invoice_status_xml ──────────────────────────────────────────────────
+
+IDENTITY_UUID = "a1b2c3d4-e5f6-4789-abcd-ef0123456789"
+
+
+@pytest.fixture
+def status_xml_sent():
+    with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
+        return build_invoice_status_xml(
+            invoice_id=INVOICE_ID,
+            identity_uuid=IDENTITY_UUID,
+            status="sent",
+            amount="150.00",
+            correlation_id=CORRELATION_ID,
+        )
+
+
+def test_invoice_status_type(status_xml_sent) -> None:
+    assert parse(status_xml_sent).findtext("header/type") == "invoice_status"
+
+
+def test_invoice_status_version(status_xml_sent) -> None:
+    assert parse(status_xml_sent).findtext("header/version") == "2.0"
+
+
+def test_invoice_status_source(status_xml_sent) -> None:
+    assert parse(status_xml_sent).findtext("header/source") == "facturatie"
+
+
+def test_invoice_status_message_id_is_uuid(status_xml_sent) -> None:
+    msg_id = parse(status_xml_sent).findtext("header/message_id")
+    assert re.match(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        msg_id,
+    )
+
+
+def test_invoice_status_correlation_id(status_xml_sent) -> None:
+    assert parse(status_xml_sent).findtext("header/correlation_id") == CORRELATION_ID
+
+
+def test_invoice_status_no_correlation_id_when_not_passed() -> None:
+    with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
+        xml = build_invoice_status_xml(
+            invoice_id=INVOICE_ID,
+            identity_uuid=IDENTITY_UUID,
+            status="paid",
+            amount="150.00",
+        )
+    assert parse(xml).findtext("header/correlation_id") is None
+
+
+def test_invoice_status_invoice_id(status_xml_sent) -> None:
+    assert parse(status_xml_sent).findtext("body/invoice_id") == INVOICE_ID
+
+
+def test_invoice_status_identity_uuid(status_xml_sent) -> None:
+    assert parse(status_xml_sent).findtext("body/identity_uuid") == IDENTITY_UUID
+
+
+def test_invoice_status_status_field(status_xml_sent) -> None:
+    assert parse(status_xml_sent).findtext("body/status") == "sent"
+
+
+def test_invoice_status_amount_and_currency(status_xml_sent) -> None:
+    amount_el = parse(status_xml_sent).find("body/amount")
+    assert amount_el is not None
+    assert amount_el.text == "150.00"
+    assert amount_el.get("currency") == "eur"
+
+
+@pytest.mark.parametrize("status", ["draft", "sent", "paid", "overdue", "cancelled"])
+def test_invoice_status_all_valid_statuses(status) -> None:
+    with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
+        xml = build_invoice_status_xml(
+            invoice_id=INVOICE_ID,
+            identity_uuid=IDENTITY_UUID,
+            status=status,
+            amount="100.00",
+        )
+    assert parse(xml).findtext("body/status") == status
+
+
+def test_invoice_status_xsd_validation_error_raises() -> None:
+    with patch("src.services.rabbitmq_sender.validate_xml", return_value=(False, "missing field")):
+        with pytest.raises(ValueError, match="XSD validation failed"):
+            build_invoice_status_xml(
+                invoice_id=INVOICE_ID,
+                identity_uuid=IDENTITY_UUID,
+                status="sent",
+                amount="100.00",
             )

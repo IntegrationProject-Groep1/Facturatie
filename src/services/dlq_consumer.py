@@ -1,4 +1,5 @@
 import logging
+import sys
 import os
 import defusedxml.ElementTree as ET
 
@@ -97,12 +98,12 @@ def process_dlq_message(
 
 def start_dlq_consumer(queue: str | None = None) -> None:
     if queue is None:
-        queue = os.getenv("QUEUE_DLQ", "facturatie.dlq")
+        queue = os.getenv("QUEUE_DLQ", "errors.facturatie")
 
     connection = get_connection()
     channel = connection.channel()
 
-    channel.queue_declare(queue=queue, passive=True)
+    channel.queue_declare(queue=queue, passive=False, durable=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=process_dlq_message)
 
@@ -117,4 +118,5 @@ def start_dlq_consumer(queue: str | None = None) -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(sys.stdout)])
     start_dlq_consumer()
