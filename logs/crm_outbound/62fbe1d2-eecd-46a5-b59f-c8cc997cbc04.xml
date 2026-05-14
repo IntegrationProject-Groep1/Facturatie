@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<message>
+    <header>
+        <message_id>62fbe1d2-eecd-46a5-b59f-c8cc997cbc04</message_id>
+        <timestamp>2026-05-13T13:18:50Z</timestamp>
+        <source>facturatie</source>
+        <type>payment_registered</type>
+        <version>2.0</version>
+    </header>
+    <body>
+        <identity_uuid>019e1e8b-03d4-7062-ae28-8e53254d36cf</identity_uuid>
+        <invoice>
+            <id>213</id>
+            <amount_paid currency="eur">175.00</amount_paid>
+            <status>pending</status>
+            <due_date>2026-12-31</due_date>
+        </invoice>
+        <payment_context>online_invoice</payment_context>
+        <transaction>
+            <id>994b2500-01d0-483b-8d19-eecfbbc4dff5</id>
+            <payment_method>on_site</payment_method>
+        </transaction>
+    </body>
+</message>
