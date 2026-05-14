@@ -1,6 +1,5 @@
 # Invoice Cancelled Flow
 
-**Branch:** `fix/fossbilling-connecter`
 **Date:** 2026-05-10
 **Author:** Team Facturatie
 

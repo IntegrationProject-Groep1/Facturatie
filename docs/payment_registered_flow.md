@@ -30,16 +30,16 @@ Facturatie service
    |-- FossBilling fail        -->  Dead Letter Queue (facturatie.dlq)
    |
    | build_payment_confirmed_xml()
-   | payment_method mapped (on_site → cash, online → card, company_link → bank_transfer)
+   | payment_method normalised (see mapping in section 4)
    |
-   | payment_registered (outgoing) --> facturatie.to.crm
+   | payment_registered (outgoing) --> crm.incoming
 ```
 
 ---
 
 ## 3. XML message formats
 
-### payment_registered (inkomend — Kassa → Facturatie)
+### payment_registered (incoming — Kassa → Facturatie)
 
 ```xml
 <message>
@@ -68,12 +68,12 @@ Facturatie service
 ```
 
 **Key fields:**
-- `body/payment_context` — `registration` of `consumption`, verplicht eerste veld in de body
-- `body/user_id` — optioneel badge/klant-ID van de betaler
-- `body/invoice/id` — FossBilling factuur-ID dat op `paid` wordt gezet
-- `body/transaction/payment_method` — inkomende waarden: `on_site`, `online`, `company_link`
+- `body/payment_context` — `registration` or `consumption`, required first field in the body
+- `body/user_id` — optional badge/customer ID of the payer
+- `body/invoice/id` — FossBilling invoice ID to mark as paid
+- `body/transaction/payment_method` — incoming values: `on_site`, `online`, `company_link`
 
-### payment_registered (uitgaand — Facturatie → CRM)
+### payment_registered (outgoing — Facturatie → CRM)
 
 ```xml
 <message>
@@ -83,88 +83,104 @@ Facturatie service
     <source>facturatie</source>
     <type>payment_registered</type>
     <version>2.0</version>
+    <correlation_id>e0ce8a33-ef26-4610-8bb7-2480dbacadc2</correlation_id>
   </header>
   <body>
-    <invoice_id>13</invoice_id>
-    <customer_id>BADGE-001</customer_id>
-    <amount_paid currency="eur">150.00</amount_paid>
-    <payment_method>cash</payment_method>
-    <paid_at>2026-05-04T18:30:05Z</paid_at>
+    <identity_uuid>BADGE-001</identity_uuid>
+    <invoice>
+      <id>13</id>
+      <amount_paid currency="eur">150.00</amount_paid>
+      <status>paid</status>
+      <due_date>2026-05-31</due_date>
+    </invoice>
+    <payment_context>online_invoice</payment_context>
+    <transaction>
+      <id>550e8400-e29b-41d4-a716-446655440000</id>
+      <payment_method>on_site</payment_method>
+    </transaction>
   </body>
 </message>
 ```
 
 **Key fields:**
-- `body/payment_method` — uitgaande waarden: `cash`, `card`, `bank_transfer` (gemapt vanuit inkomende waarden)
-- `body/paid_at` — tijdstip waarop FossBilling de betaling heeft verwerkt
+- `header/correlation_id` — `message_id` of the incoming `payment_registered` message
+- `body/identity_uuid` — badge/customer ID of the payer
+- `body/invoice/status` — `paid` for full payment, `pending` for partial payment
+- `body/transaction/payment_method` — see mapping in section 4
+- `body/payment_context` — always `online_invoice`
 
 ---
 
 ## 4. Payment method mapping
 
-De inkomende `payment_method` waarden van Kassa worden gemapt naar de uitgaande waarden die CRM verwacht:
+Incoming values are normalised to the values accepted by the shared XSD (Section 8.2). Unrecognised values fall back to `online`.
 
-| Inkomend (Kassa) | Uitgaand (CRM) |
-|-----------------|----------------|
-| `on_site`       | `cash`         |
-| `online`        | `card`         |
-| `company_link`  | `bank_transfer`|
+| Incoming | Outgoing |
+|---|---|
+| `on_site` | `on_site` |
+| `card` | `on_site` |
+| `cash` | `on_site` |
+| `pos` | `on_site` |
+| `online` | `online` |
+| `company_link` | `company_link` |
+| `link` | `company_link` |
+| *(unknown)* | `online` |
 
 ---
 
-## 5. Aangepaste bestanden
+## 5. Modified files
 
 ### `src/services/rabbitmq_receiver.py`
 
-| Handler | Gedrag |
-|---------|--------|
-| `payment_registered` | Leest `invoice/id`, `amount_paid`, `transaction/payment_method` en `user_id` uit het bericht; roept `pay_invoice()` aan; mapt `payment_method`; stuurt bevestiging naar `facturatie.to.crm` |
+| Handler | Behaviour |
+|---|---|
+| `payment_registered` | Reads `invoice/id`, `amount_paid`, `transaction/payment_method` and `user_id` from the message; calls `pay_invoice()`; normalises `payment_method`; sends confirmation to `crm.incoming` |
 
 ### `src/services/rabbitmq_sender.py`
 
-| Functie | Doel |
-|---------|------|
-| `build_payment_confirmed_xml(invoice_id, customer_id, amount, currency, payment_method, paid_at)` | Bouwt het uitgaande `payment_registered` bericht voor CRM; valideert tegen `payement_registered_outgoing.xsd` |
+| Function | Purpose |
+|---|---|
+| `build_payment_confirmed_xml(invoice_id, identity_uuid, amount, currency, payment_method, paid_at, status, due_date, correlation_id)` | Builds the outgoing `payment_registered` message for CRM; validates against `payment_registered.xsd` |
 
 ### `src/services/fossbilling_api.py`
 
-| Functie | Doel |
-|---------|------|
-| `pay_invoice(invoice_id, amount)` | Zet de factuur op status `paid` via `admin/invoice/update`; geeft `True` terug bij succes |
+| Function | Purpose |
+|---|---|
+| `pay_invoice(invoice_id, amount)` | Sets invoice status to `paid` via `admin/invoice/update`; returns `True` on success |
 
 ---
 
-## 6. Lokaal testen
+## 6. Local testing
 
-### Vereisten
+### Requirements
 
-| Wat | Commando |
-|-----|---------|
-| RabbitMQ draait | `docker compose up rabbitmq -d` |
-| Receiver draait | `python -m src.services.rabbitmq_receiver` |
-| FossBilling bereikbaar | check `.env` voor `BILLING_API_URL` en `BILLING_API_TOKEN` |
+| What | Command |
+|---|---|
+| RabbitMQ running | `docker compose up rabbitmq -d` |
+| Receiver running | `python -m src.main` |
+| FossBilling reachable | verify `.env` for `BILLING_API_URL` and `BILLING_API_TOKEN` |
 
-### Testscript
+### Test script
 
-Pas `INVOICE_ID` bovenaan aan naar een bestaand factuur-ID uit FossBilling (bijvoorbeeld aangemaakt via de consumption flow):
+Update `INVOICE_ID` at the top of the script to an existing invoice ID from FossBilling (e.g. one created via the consumption flow):
 
 ```bash
 python -m scripts.send_test_payment
 ```
 
-### Verwacht resultaat
+### Expected result
 
-- **FossBilling** — factuur heeft status `paid`
-- **RabbitMQ `facturatie.to.crm`** — een `payment_registered` bevestigingsbericht staat klaar
-- **Receiver logs** — geen errors, je ziet de payment data geëxtraheerd en de bevestiging verstuurd
+- **FossBilling** — invoice has status `paid`
+- **RabbitMQ `crm.incoming`** — a `payment_registered` confirmation message is available
+- **Receiver logs** — no errors; payment data extracted and confirmation sent
 
 ---
 
 ## 7. Security
 
-| Gebied | Status |
-|--------|--------|
-| Credentials in code | Geen — alles via `.env` en `os.getenv()` |
-| SQL injection | Niet van toepassing — geen database interactie in deze flow |
-| XML injection (inkomend) | Beschermd — `defusedxml` gebruikt voor alle inkomende XML parsing |
-| XML injection (uitgaand) | Beschermd — `ElementTree` escaped alle waarden automatisch |
+| Area | Status |
+|---|---|
+| Credentials in code | None — all via `.env` and `os.getenv()` |
+| SQL injection | Not applicable — no database interaction in this flow |
+| XML injection (incoming) | Protected — `defusedxml` used for all incoming XML parsing |
+| XML injection (outgoing) | Protected — `ElementTree` automatically escapes all values |

@@ -47,9 +47,9 @@ Triggered by three incoming message types:
     <type>invoice_available</type>
     <timestamp>2026-05-06T10:30:00Z</timestamp>
     <source>facturatie</source>
-    <master_uuid>550e8400-e29b-41d4-a716-446655440000</master_uuid>
   </header>
   <body>
+    <identity_uuid>550e8400-e29b-41d4-a716-446655440000</identity_uuid>
     <invoice_id>142</invoice_id>
     <pdf_url>https://facturatie.desiderius.me/invoice/142</pdf_url>
   </body>
@@ -65,7 +65,7 @@ Triggered by three incoming message types:
 | `header/type` | yes | Always `invoice_available` |
 | `header/timestamp` | yes | ISO 8601 UTC |
 | `header/source` | yes | Always `facturatie` |
-| `header/master_uuid` | yes | UUID of the customer from the identity service, used by Frontend to identify the customer |
+| `body/identity_uuid` | yes | Master UUID of the customer from the identity service, used by Frontend to identify the customer |
 | `body/invoice_id` | yes | FossBilling invoice ID |
 | `body/pdf_url` | yes | URL to the invoice page, constructed from `BILLING_WEB_URL` env variable |
 
@@ -73,9 +73,9 @@ Triggered by three incoming message types:
 
 ## 4. XSD
 
-**File:** `src/services/xsd/invoice_link.xsd`
+**File:** `xsd/invoice_available.xsd`
 
-The `master_uuid` field is validated against a strict UUID pattern:
+The `identity_uuid` field is validated against a strict UUID pattern:
 ```
 [0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}
 ```
