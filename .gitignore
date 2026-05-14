@@ -27,6 +27,7 @@ Thumbs.db
 
 # Log bestanden
 *.log
+logs/
 
 # Python packaging
 *.egg-info/
