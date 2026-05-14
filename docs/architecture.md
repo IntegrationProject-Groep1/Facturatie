@@ -160,10 +160,10 @@ Holds consumption order items awaiting invoice generation.
 | `consumption_order_id` | VARCHAR(100) | `header/message_id` of the source `consumption_order` |
 | `company_id` | VARCHAR(100) | Customer / company identifier from CRM |
 | `badge_id` | VARCHAR(100) | Attendee badge / identity UUID |
-| `master_uuid` | VARCHAR(100) | Master UUID from identity service |
+| `master_uuid` | VARCHAR(36) | Master UUID from identity service |
 | `email` | VARCHAR(255) | Customer email (populated on `invoice_request`) |
 | `company_name` | VARCHAR(255) | Company display name (populated on `invoice_request`) |
-| `description` | TEXT | Item description |
+| `description` | VARCHAR(255) | Item description |
 | `price` | DECIMAL(10,2) | Unit price |
 | `quantity` | INT | Quantity |
 | `vat_rate` | VARCHAR(10) | VAT rate (6, 12, or 21) |
@@ -176,7 +176,7 @@ Caches FossBilling client IDs per company to avoid redundant API calls.
 | Column | Type | Description |
 |---|---|---|
 | `company_id` | VARCHAR(100) PK | |
-| `client_id` | VARCHAR(100) | FossBilling internal client ID |
+| `client_id` | INT | FossBilling internal client ID |
 
 ---
 

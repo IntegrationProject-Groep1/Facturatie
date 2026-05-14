@@ -111,5 +111,5 @@ Facturatie service
 | Situation | Behaviour |
 |---|---|
 | XSD validation fails | DLQ + NACK |
-| Client not found in FossBilling | Warning logged, ACK — not treated as a fatal error |
+| Client not found in FossBilling | Error logged, DLQ + NACK |
 | FossBilling update fails | Error logged, DLQ + NACK |
