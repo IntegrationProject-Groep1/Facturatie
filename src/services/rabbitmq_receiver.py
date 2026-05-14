@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import re
 from decimal import Decimal
 
-from .fossbilling_api import create_registration_invoice, pay_invoice
+from .fossbilling_api import create_registration_invoice, get_invoice, pay_invoice
 from .rabbitmq_sender import (
     build_invoice_created_notification_xml,
     build_payment_confirmed_xml,
@@ -252,6 +252,8 @@ def process_message(
             return
 
         # Build and send XML for the Mailing Service
+        _invoice_data = get_invoice(invoice_id)
+        _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id)
         notification_xml = build_invoice_created_notification_xml(
             invoice_id=invoice_id,
             recipient_email=customer_data["email"],
@@ -259,6 +261,8 @@ def process_message(
             first_name=customer_data.get("first_name", ""),
             last_name=customer_data.get("last_name", ""),
             identity_uuid=master_uuid,
+            invoice_data=_invoice_data,
+            pdf_bytes=_pdf_bytes,
         )
 
         send_message(
@@ -359,6 +363,8 @@ def process_message(
                 logging.warning("[RECEIVER] invoice_status failed for invoice_request: %s", status_err)
 
             try:
+                _inv_data = get_invoice(invoice_id)
+                _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id)
                 notification_xml = build_invoice_created_notification_xml(
                     invoice_id=invoice_id,
                     recipient_email=customer["email"],
@@ -367,6 +373,8 @@ def process_message(
                     last_name=customer.get("last_name", ""),
                     identity_uuid=master_uuid,
                     subject=f"Uw factuur {invoice_id} staat klaar",
+                    invoice_data=_inv_data,
+                    pdf_bytes=_pdf_bytes,
                 )
                 send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
             except Exception as mail_err:
@@ -491,6 +499,8 @@ def process_message(
                     )
 
                     try:
+                        _inv_data = get_invoice(invoice_id)
+                        _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id)
                         notification_xml = build_invoice_created_notification_xml(
                             invoice_id=invoice_id,
                             recipient_email=meta["email"],
@@ -499,6 +509,8 @@ def process_message(
                             last_name="",
                             identity_uuid=meta.get("master_uuid", "") or master_uuid,
                             subject=f"Uw factuur {invoice_id} staat klaar",
+                            invoice_data=_inv_data,
+                            pdf_bytes=_pdf_bytes,
                         )
                         send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
                     except Exception as mail_err:

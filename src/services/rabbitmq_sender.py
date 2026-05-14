@@ -12,9 +12,6 @@ from src.utils.xml_validator import validate_xml
 # Load environment variables from the .env file
 load_dotenv()
 
-BILLING_WEB_URL = os.getenv("BILLING_WEB_URL", "https://portal.yourdomain.com").rstrip("/")
-
-
 def build_consumption_order_xml(
     customer_id: str,
     items: list[dict],
@@ -163,6 +160,77 @@ def send_message(
         connection.close()
 
 
+def _build_template_data(invoice_id: str, invoice_data: dict | None) -> dict:
+    if not invoice_data:
+        return {"invoice_number": invoice_id, "invoice_id": invoice_id}
+
+    seller = invoice_data.get("seller", {})
+    buyer  = invoice_data.get("buyer", {})
+    lines  = invoice_data.get("lines", [])
+
+    due_at = (invoice_data.get("due_at") or "")[:10]
+    created_at = (invoice_data.get("created_at") or "")[:10]
+    subtotal = float(invoice_data.get("subtotal") or 0)
+    tax      = float(invoice_data.get("tax") or 0)
+    total    = float(invoice_data.get("total") or 0)
+    currency = (invoice_data.get("currency") or "EUR").lower()
+
+    items = []
+    for line in lines:
+        unit_price = float(line.get("price") or 0)
+        vat_rate   = float(line.get("taxrate") or 0)
+        line_total = float(line.get("total") or 0)
+        vat_amount = round(line_total - unit_price * int(line.get("quantity") or 1), 2)
+        items.append({
+            "description": line.get("title", ""),
+            "quantity":    int(line.get("quantity") or 1),
+            "unit_price":  f"{unit_price:.2f}",
+            "vat_rate":    vat_rate,
+            "vat_amount":  f"{vat_amount:.2f}",
+            "total":       f"{line_total:.2f}",
+            "currency":    currency,
+        })
+
+    buyer_address = " ".join(filter(None, [
+        buyer.get("address") or buyer.get("address_1", ""),
+        buyer.get("city", ""),
+        buyer.get("zip", "") or buyer.get("postcode", ""),
+    ])).strip(", ")
+
+    result: dict = {
+        "invoice_number": invoice_data.get("serie_nr") or invoice_id,
+        "invoice_date":   created_at,
+        "due_date":       due_at,
+        "seller": {
+            "company":    seller.get("company", ""),
+            "address":    seller.get("address_1") or seller.get("address", ""),
+            "email":      seller.get("email", ""),
+            "vat_number": seller.get("company_vat") or "",
+            "iban":       seller.get("account_number") or "",
+            "bic":        seller.get("bic") or "",
+        },
+        "buyer": {
+            "first_name": buyer.get("first_name", ""),
+            "last_name":  buyer.get("last_name", ""),
+            "email":      buyer.get("email", ""),
+            "address":    buyer_address,
+            "vat_number": buyer.get("company_vat") or "",
+        },
+        "items": items,
+        "summary": {
+            "subtotal":  f"{subtotal:.2f}",
+            "vat_total": f"{tax:.2f}",
+            "total":     f"{total:.2f}",
+            "currency":  currency,
+        },
+        "payment": {
+            "reference": f"+++{invoice_data.get('id', invoice_id)}/2026/00001+++",
+            "method":    "on_site",
+        },
+    }
+    return result
+
+
 def build_invoice_created_notification_xml(
     invoice_id: str,
     recipient_email: str,
@@ -173,6 +241,8 @@ def build_invoice_created_notification_xml(
     identity_uuid: str = "",
     subject: str = "Uw factuur staat klaar",
     source: str = "facturatie",
+    invoice_data: dict | None = None,
+    pdf_bytes: bytes | None = None,
 ) -> str:
     """
     Builds a send_mailing XML message to be sent to the Mailing team.
@@ -182,8 +252,6 @@ def build_invoice_created_notification_xml(
 
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    billing_web_base = BILLING_WEB_URL
-    pdf_url = f"{billing_web_base}/invoice/{invoice_id}"
 
     root = ET.Element("message")
 
@@ -208,10 +276,16 @@ def build_invoice_created_notification_xml(
     ET.SubElement(contact, "first_name").text = first_name
     ET.SubElement(contact, "last_name").text = last_name
 
-    ET.SubElement(body, "template_data").text = json.dumps({
-        "invoice_id": invoice_id,
-        "pdf_url": pdf_url,
-    })
+    template = _build_template_data(invoice_id, invoice_data)
+    ET.SubElement(body, "template_data").text = json.dumps(template, ensure_ascii=False)
+
+    if pdf_bytes:
+        import base64
+        serie_nr = (invoice_data or {}).get("serie_nr") or invoice_id
+        attachment = ET.SubElement(body, "attachment")
+        ET.SubElement(attachment, "filename").text = f"factuur-{serie_nr}.pdf"
+        ET.SubElement(attachment, "content_type").text = "application/pdf"
+        ET.SubElement(attachment, "base64_data").text = base64.b64encode(pdf_bytes).decode("ascii")
 
     ET.indent(root, space="    ")
     xml_str = f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
