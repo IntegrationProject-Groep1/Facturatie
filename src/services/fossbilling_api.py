@@ -56,16 +56,19 @@ def _reset_admin_session() -> requests.Session:
         return _admin_session
 
 
-def get_invoice_pdf(invoice_id: str) -> bytes:
+def get_invoice_pdf(invoice_id: str, invoice_hash: str | None = None) -> bytes:
     """Downloads the FossBilling-generated PDF for the given invoice.
     Uses the admin web session. Re-authenticates automatically on session expiry.
+    Pass invoice_hash to skip an extra get_invoice() API call when the caller
+    already has the invoice data.
     Raises FossBillingNotFoundError if the invoice does not exist.
     """
-    invoice = get_invoice(invoice_id)
-    if invoice is None:
-        raise FossBillingNotFoundError(f"Invoice {invoice_id} not found")
+    if invoice_hash is None:
+        invoice = get_invoice(invoice_id)
+        if invoice is None:
+            raise FossBillingNotFoundError(f"Invoice {invoice_id} not found")
+        invoice_hash = invoice.get("hash")
 
-    invoice_hash = invoice.get("hash")
     if not invoice_hash:
         raise Exception(f"Invoice {invoice_id} has no hash field")
 

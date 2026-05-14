@@ -252,8 +252,13 @@ def process_message(
             return
 
         # Build and send XML for the Mailing Service
-        _invoice_data = get_invoice(invoice_id)
-        _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id)
+        try:
+            _invoice_data = get_invoice(invoice_id)
+            _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id, invoice_hash=(_invoice_data or {}).get("hash"))
+        except Exception as e:
+            send_to_dlq(channel, body, [f"ERROR: fossbilling_pdf_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
         notification_xml = build_invoice_created_notification_xml(
             invoice_id=invoice_id,
             recipient_email=customer_data["email"],
@@ -364,7 +369,7 @@ def process_message(
 
             try:
                 _inv_data = get_invoice(invoice_id)
-                _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id)
+                _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id, invoice_hash=(_inv_data or {}).get("hash"))
                 notification_xml = build_invoice_created_notification_xml(
                     invoice_id=invoice_id,
                     recipient_email=customer["email"],
@@ -500,7 +505,8 @@ def process_message(
 
                     try:
                         _inv_data = get_invoice(invoice_id)
-                        _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id)
+                        _inv_hash = (_inv_data or {}).get("hash")
+                        _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id, invoice_hash=_inv_hash)
                         notification_xml = build_invoice_created_notification_xml(
                             invoice_id=invoice_id,
                             recipient_email=meta["email"],

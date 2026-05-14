@@ -12,6 +12,7 @@ from src.utils.xml_validator import validate_xml
 # Load environment variables from the .env file
 load_dotenv()
 
+
 def build_consumption_order_xml(
     customer_id: str,
     items: list[dict],
@@ -165,27 +166,28 @@ def _build_template_data(invoice_id: str, invoice_data: dict | None) -> dict:
         return {"invoice_number": invoice_id, "invoice_id": invoice_id}
 
     seller = invoice_data.get("seller", {})
-    buyer  = invoice_data.get("buyer", {})
-    lines  = invoice_data.get("lines", [])
+    buyer = invoice_data.get("buyer", {})
+    lines = invoice_data.get("lines", [])
 
+    from decimal import Decimal
     due_at = (invoice_data.get("due_at") or "")[:10]
     created_at = (invoice_data.get("created_at") or "")[:10]
-    subtotal = float(invoice_data.get("subtotal") or 0)
-    tax      = float(invoice_data.get("tax") or 0)
-    total    = float(invoice_data.get("total") or 0)
+    subtotal = Decimal(str(invoice_data.get("subtotal") or 0))
+    tax = Decimal(str(invoice_data.get("tax") or 0))
+    total = Decimal(str(invoice_data.get("total") or 0))
     currency = (invoice_data.get("currency") or "EUR").lower()
 
     items = []
     for line in lines:
-        unit_price = float(line.get("price") or 0)
-        vat_rate   = float(line.get("taxrate") or 0)
-        line_total = float(line.get("total") or 0)
-        vat_amount = round(line_total - unit_price * int(line.get("quantity") or 1), 2)
+        unit_price = Decimal(str(line.get("price") or 0))
+        vat_rate = Decimal(str(line.get("taxrate") or 0))
+        line_total = Decimal(str(line.get("total") or 0))
+        vat_amount = line_total - unit_price * int(line.get("quantity") or 1)
         items.append({
             "description": line.get("title", ""),
             "quantity":    int(line.get("quantity") or 1),
             "unit_price":  f"{unit_price:.2f}",
-            "vat_rate":    vat_rate,
+            "vat_rate":    float(vat_rate),
             "vat_amount":  f"{vat_amount:.2f}",
             "total":       f"{line_total:.2f}",
             "currency":    currency,
@@ -224,7 +226,7 @@ def _build_template_data(invoice_id: str, invoice_data: dict | None) -> dict:
             "currency":  currency,
         },
         "payment": {
-            "reference": f"+++{invoice_data.get('id', invoice_id)}/2026/00001+++",
+            "reference": f"+++{invoice_data.get('id', invoice_id)}/{datetime.now().year}/00001+++",
             "method":    "on_site",
         },
     }
