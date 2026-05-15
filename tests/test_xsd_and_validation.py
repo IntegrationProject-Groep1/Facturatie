@@ -35,14 +35,15 @@ def build_invoice_request_xml(
     if correlation_id:
         ET.SubElement(header, "correlation_id").text = correlation_id
     else:
-        ET.SubElement(header, "correlation_id").text = str(uuid.uuid4())  # mandatory field
+        ET.SubElement(header, "correlation_id").text = "c3d4e5f6-a7b8-9012-cdef-012345678902"  # verplicht veld
 
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "identity_uuid").text = str(uuid.uuid4())
+    ET.SubElement(body, "identity_uuid").text = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"
+    ET.SubElement(body, "payment_status").text = "pending"
+    ET.SubElement(body, "payment_method").text = "on_site"
 
     invoice_data = ET.SubElement(body, "invoice_data")
-
-    # contact block per InvoiceDataType XSD
+    # Volgorde conform InvoiceDataType XSD: first_name → last_name → email → address → company_name → vat_number
     contact = ET.SubElement(invoice_data, "contact")
     ET.SubElement(contact, "first_name").text = "Jan"
     ET.SubElement(contact, "last_name").text = "De Tester"
@@ -79,11 +80,11 @@ def build_new_registration_xml(
     ET.SubElement(header, "source").text = source
     ET.SubElement(header, "type").text = "new_registration"
     ET.SubElement(header, "version").text = version
-    ET.SubElement(header, "correlation_id").text = correlation_id or str(uuid.uuid4())  # mandatory
+    ET.SubElement(header, "correlation_id").text = "c3d4e5f6-a7b8-9012-cdef-012345678902"
 
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")
-    ET.SubElement(customer, "identity_uuid").text = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"  # was: user_id
+    ET.SubElement(customer, "identity_uuid").text = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"
 
     if email is not None:
         ET.SubElement(customer, "email").text = email

@@ -299,6 +299,21 @@ def get_invoice_status(invoice_id: str) -> str | None:
     return invoice.get("status") if invoice is not None else None
 
 
+def fetch_invoice_type_by_id(invoice_id: str) -> str:
+    """Bepaalt het type factuur: 'registration' of 'consumption' op basis van factuurlijnen."""
+    try:
+        response = _api_post("admin/invoice/get", {"id": invoice_id})
+        invoice = response.get("result", {})
+        lines = invoice.get("lines", [])
+        for line in lines:
+            if "Inschrijvingskosten" in line.get("title", ""):
+                return "registration"
+        return "consumption"
+    except Exception as e:
+        logging.warning("[FOSSBILLING] get_invoice_type failed for %s: %s", invoice_id, e)
+        return "consumption"
+
+
 def get_client_by_company_id(company_id: str) -> int | None:
     """Looks up a client by company_id in FossBilling. Returns client_id or None if not found."""
     result = _api_post("admin/client/get_list", {"search": company_id, "per_page": 100})
@@ -476,6 +491,17 @@ def cancel_invoice(invoice_id: str) -> bool:
         return True
     except Exception as e:
         logging.error("[FOSSBILLING] ERROR: Failed to cancel invoice '%s': %s", invoice_id, e)
+        return False
+
+
+def mark_invoice_as_refunded(invoice_id: str) -> bool:
+    """Maakt een creditnota aan voor een betaalde factuur."""
+    try:
+        _api_post("admin/invoice/update", {"id": invoice_id, "status": "refunded"})
+        logging.info("[FOSSBILLING] Credit note created for invoice '%s'", invoice_id)
+        return True
+    except Exception as e:
+        logging.error("[FOSSBILLING] Failed to create credit note for '%s': %s", invoice_id, e)
         return False
 
 
