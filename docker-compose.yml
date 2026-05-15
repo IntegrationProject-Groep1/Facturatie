@@ -46,7 +46,7 @@ services:
       - mysql
   facturatie_mcp:
     build: .
-    command: python integratie/mcp_server.py
+    command: python -m src.services.mcp_server
     container_name: facturatie_mcp
     restart: unless-stopped
     ports:
