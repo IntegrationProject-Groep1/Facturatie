@@ -201,6 +201,7 @@ def test_paid_invoice_sends_failed_notification_to_crm():
          patch("src.services.fossbilling_api.get_invoice_type", return_value="consumption", create=True), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.create_credit_note",
                return_value=True), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice", return_value=True), \
          patch("src.services.rabbitmq_receiver.publish_invoice_cancelled") as mock_cancelled:
         process_message(channel, _make_method(), MagicMock(), body)
 
@@ -219,6 +220,7 @@ def test_paid_invoice_is_acked_not_sent_to_dlq():
          patch("src.services.fossbilling_api.get_invoice_type", return_value="consumption", create=True), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.create_credit_note",
                return_value=True), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice", return_value=True), \
          patch("src.services.rabbitmq_receiver.publish_invoice_cancelled"):
         process_message(channel, _make_method(), MagicMock(), body)
 
