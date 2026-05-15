@@ -138,9 +138,10 @@ def test_fossbilling_failure_sends_to_dlq():
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
-               return_value={"status": "unpaid", "lines": [{"title": "Inschrijvingskosten"}]}), \
+           return_value={"status": "unpaid"}), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice",
-               return_value=False):
+           return_value=False), \
+         patch("src.services.rabbitmq_receiver.send_log"):
         process_message(channel, _make_method(), MagicMock(), body)
 
     channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
@@ -175,8 +176,8 @@ def test_paid_invoice_blocks_cancellation():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
-               return_value="paid"), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+                return_value={"status": "paid"}), \
          patch("src.services.fossbilling_api.get_invoice_type", return_value="consumption", create=True), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.create_credit_note",
                return_value=True) as mock_credit, \
@@ -195,8 +196,8 @@ def test_paid_invoice_sends_failed_notification_to_crm():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
-               return_value="paid"), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+                return_value={"status": "paid"}), \
          patch("src.services.fossbilling_api.get_invoice_type", return_value="consumption", create=True), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.create_credit_note",
                return_value=True), \
@@ -213,8 +214,8 @@ def test_paid_invoice_is_acked_not_sent_to_dlq():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
-               return_value="paid"), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+               return_value={"status": "paid"}), \
          patch("src.services.fossbilling_api.get_invoice_type", return_value="consumption", create=True), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.create_credit_note",
                return_value=True), \

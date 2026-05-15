@@ -49,6 +49,7 @@ def _build_invoice_request_xml(
     user_id: str = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc",
     company_name: str = "Bedrijf NV",
     correlation_id: str = "c3d4e5f6-a7b8-9012-cdef-012345678902",
+    vat_number: str = "BE0123456789",
 ) -> bytes:
     """
     Builds an invoice_request XML conforming to the new structure (contract §11.1).
@@ -75,7 +76,8 @@ def _build_invoice_request_xml(
     contact = ET.SubElement(invoice_data, "contact")
     ET.SubElement(contact, "first_name").text = "Test"
     ET.SubElement(contact, "last_name").text = "User"
-    ET.SubElement(contact, "email").text = "info@bedrijf.be"
+
+    ET.SubElement(invoice_data, "email").text = "info@bedrijf.be"
 
     address = ET.SubElement(invoice_data, "address")
     ET.SubElement(address, "street").text = "Teststraat"
