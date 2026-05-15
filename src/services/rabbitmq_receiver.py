@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import re
 from decimal import Decimal
 
-from .fossbilling_api import create_registration_invoice, pay_invoice
+from .fossbilling_api import create_registration_invoice, get_invoice, pay_invoice
 from .rabbitmq_sender import (
     build_invoice_created_notification_xml,
     build_payment_confirmed_xml,
@@ -252,6 +252,13 @@ def process_message(
             return
 
         # Build and send XML for the Mailing Service
+        try:
+            _invoice_data = get_invoice(invoice_id)
+            _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id, invoice_hash=(_invoice_data or {}).get("hash"))
+        except Exception as e:
+            send_to_dlq(channel, body, [f"ERROR: fossbilling_pdf_failed: {e}"])
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
         notification_xml = build_invoice_created_notification_xml(
             invoice_id=invoice_id,
             recipient_email=customer_data["email"],
@@ -259,6 +266,8 @@ def process_message(
             first_name=customer_data.get("first_name", ""),
             last_name=customer_data.get("last_name", ""),
             identity_uuid=master_uuid,
+            invoice_data=_invoice_data,
+            pdf_bytes=_pdf_bytes,
         )
 
         send_message(
@@ -326,14 +335,13 @@ def process_message(
 
             items, row_ids, company_id = consumption_store.get_items_by_correlation_id(correlation_id)
             if not items:
-                logging.warning(
-                    "[RECEIVER] invoice_request: no items found for correlation_id=%s — ack without invoice",
-                    correlation_id,
-                )
+                logging.warning("[RECEIVER] invoice_request: no items found | correlation_id=%s", correlation_id)
                 channel.basic_ack(delivery_tag=method.delivery_tag)
                 return
 
-            master_uuid = user_id
+            payment_status = data.get("payment_status", "pending")
+            payment_method = data.get("payment_method", "")
+
             invoice_id = fossbilling_client.process_consumption_order(
                 company_id,
                 items,
@@ -342,6 +350,16 @@ def process_message(
                 last_name=last_name,
                 email=customer_email
             )
+
+            consumption_store.save_invoice_correlation(
+                invoice_id=invoice_id,
+                correlation_id=correlation_id,
+                invoice_type="consumption",
+            )
+
+            if payment_status == "paid":
+                fossbilling_client.mark_invoice_as_paid(invoice_id)
+                logging.info("[RECEIVER] Invoice marked as paid | invoice_id=%s", invoice_id)
 
             consumption_store.clear_by_ids(row_ids)
 
@@ -359,6 +377,8 @@ def process_message(
                 logging.warning("[RECEIVER] invoice_status failed for invoice_request: %s", status_err)
 
             try:
+                _inv_data = get_invoice(invoice_id)
+                _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id, invoice_hash=(_inv_data or {}).get("hash"))
                 notification_xml = build_invoice_created_notification_xml(
                     invoice_id=invoice_id,
                     recipient_email=customer["email"],
@@ -367,13 +387,15 @@ def process_message(
                     last_name=customer.get("last_name", ""),
                     identity_uuid=master_uuid,
                     subject=f"Uw factuur {invoice_id} staat klaar",
+                    invoice_data=_inv_data,
+                    pdf_bytes=_pdf_bytes,
                 )
                 send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
             except Exception as mail_err:
                 logging.warning("[RECEIVER] Invoice created but mailing failed: %s", mail_err)
 
             try:
-                publish_invoice_link(invoice_id, master_uuid, channel=channel)
+                publish_invoice_link(invoice_id, user_id, channel=channel)
             except Exception as link_err:
                 logging.warning("[RECEIVER] Invoice created but invoice_link failed: %s", link_err)
 
@@ -400,7 +422,7 @@ def process_message(
 
     elif msg_type == "consumption_order":
         customer_id = root.findtext("body/customer/id") or ""
-        user_id = root.findtext("body/customer/identity_uuid") or ""
+        identity_uuid = root.findtext("body/customer/identity_uuid") or ""
         email = root.findtext("body/customer/email") or ""
 
         item_elements = root.findall("body/items/item")
@@ -413,18 +435,20 @@ def process_message(
         for item_el in item_elements:
             unit_price_el = item_el.find("unit_price")
             price = unit_price_el.text if unit_price_el is not None else "0.00"
+            session_id = item_el.findtext("session_id") or None
             items.append({
                 "description": item_el.findtext("description") or "",
                 "price": price,
                 "quantity": int(item_el.findtext("quantity") or "1"),
                 "vat_rate": item_el.findtext("vat_rate") or "",
+                "session_id": session_id,
             })
 
         try:
             consumption_store.save_items(
                 company_id=customer_id,
-                badge_id=user_id,
-                master_uuid=user_id,
+                badge_id=identity_uuid,
+                master_uuid=identity_uuid,
                 items=items,
                 email=email,
                 consumption_order_id=msg_id,
@@ -491,6 +515,9 @@ def process_message(
                     )
 
                     try:
+                        _inv_data = get_invoice(invoice_id)
+                        _inv_hash = (_inv_data or {}).get("hash")
+                        _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id, invoice_hash=_inv_hash)
                         notification_xml = build_invoice_created_notification_xml(
                             invoice_id=invoice_id,
                             recipient_email=meta["email"],
@@ -499,6 +526,8 @@ def process_message(
                             last_name="",
                             identity_uuid=meta.get("master_uuid", "") or master_uuid,
                             subject=f"Uw factuur {invoice_id} staat klaar",
+                            invoice_data=_inv_data,
+                            pdf_bytes=_pdf_bytes,
                         )
                         send_message(notification_xml, routing_key="facturatie.to.mailing", channel=channel)
                     except Exception as mail_err:
@@ -649,19 +678,27 @@ def process_message(
             return
 
         invoice_id = root.findtext("body/invoice_id")
-        customer_id = root.findtext("body/identity_uuid") or ""
-        correlation_id = root.findtext("header/message_id")
+        identity_uuid = root.findtext("body/identity_uuid") or ""
+        correlation_id = root.findtext("header/correlation_id")
 
-        if not invoice_id:
-            send_to_dlq(channel, body, ["ERROR: missing invoice_id in invoice_cancelled message"])
-            publish_cancellation_failed(
-                invoice_id="unknown",
-                customer_id=customer_id,
-                reason="missing_invoice_id",
-                channel=channel,
-            )
+        if not invoice_id and not correlation_id:
+            send_to_dlq(channel, body, ["ERROR: missing both invoice_id and correlation_id"])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
+
+        # If not invoice_id, look for correlation_id
+        if not invoice_id:
+            invoice_id = consumption_store.get_invoice_id_by_correlation_id(correlation_id)
+            if not invoice_id:
+                logging.warning("[RECEIVER] No invoice found for correlation_id=%s", correlation_id)
+                publish_cancellation_failed(
+                    invoice_id="unknown",
+                    customer_id=identity_uuid,
+                    reason="invoice_not_found",
+                    channel=channel,
+                )
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+                return
 
         logging.info("[RECEIVER][%s] Processing invoice=%s", msg_type, invoice_id)
 
@@ -680,103 +717,42 @@ def process_message(
             )
             publish_cancellation_failed(
                 invoice_id,
-                customer_id=customer_id,
+                customer_id=identity_uuid,
                 reason="invoice_not_found",
                 channel=channel,
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        status = invoice.get("status")
-        invoice_type = fossbilling_client.get_invoice_type(invoice)
+        status = invoice.get("status", "")
 
         if status == "cancelled":
+            reason = "invoice_already_cancelled"
             logging.warning(
                 "[RECEIVER][%s] Cancellation blocked — invoice '%s' already cancelled",
                 msg_type, invoice_id
             )
             publish_cancellation_failed(
                 invoice_id,
-                customer_id=customer_id,
-                reason="invoice_already_cancelled",
-                channel=channel,
-            )
-            channel.basic_ack(delivery_tag=method.delivery_tag)
-            return
-
-        if invoice_type == "consumption":
-            logging.warning(
-                "[RECEIVER][%s] Cancellation blocked — consumption invoice '%s' cannot be cancelled",
-                msg_type, invoice_id
-            )
-            publish_cancellation_failed(
-                invoice_id,
-                customer_id=customer_id,
-                reason="consumption_invoice_cannot_be_cancelled",
+                customer_id=identity_uuid,
+                reason=reason,
                 channel=channel,
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
 
         if status == "paid":
-            logging.info(
-                "[RECEIVER][%s] Paid registration invoice '%s' — creating credit note", msg_type, invoice_id
-            )
-            try:
-                credit_note_id = fossbilling_client.create_credit_note(invoice)
-                publish_invoice_cancelled(invoice_id, customer_id, channel=channel)
-                try:
-                    publish_invoice_status(
-                        invoice_id=invoice_id,
-                        identity_uuid=customer_id,
-                        status="cancelled",
-                        amount=str(invoice.get("total", "0.00")),
-                        correlation_id=msg_id,
-                        channel=channel,
-                    )
-                except Exception as status_err:
-                    logging.warning(
-                        "[RECEIVER] invoice_status failed for invoice_cancelled (credit note): %s", status_err
-                    )
-                send_log(
-                    "info", "invoice",
-                    f"Credit note {credit_note_id} created for paid registration invoice {invoice_id}",
-                    channel=channel,
-                )
-                logging.info(
-                    "[RECEIVER][%s] Credit note created | credit_note_id=%s | original_invoice_id=%s",
-                    msg_type, credit_note_id, invoice_id,
-                )
-                channel.basic_ack(delivery_tag=method.delivery_tag)
-                return
-            except Exception as e:
-                logging.error(
-                    "[RECEIVER][%s] ERROR: credit note creation failed for invoice '%s': %s",
-                    msg_type, invoice_id, e
-                )
-                send_to_dlq(channel, body, [f"ERROR: credit_note_creation_failed for invoice '{invoice_id}': {e}"])
-                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-                return
+            success = fossbilling_client.create_credit_note(invoice_id)
+        else:
+            success = fossbilling_client.cancel_invoice(invoice_id)
 
-        success = fossbilling_client.cancel_invoice(invoice_id)
         if not success:
             error_msg = f"ERROR: FossBilling failed to cancel invoice '{invoice_id}'"
             send_to_dlq(channel, body, [error_msg])
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        publish_invoice_cancelled(invoice_id, customer_id, channel=channel)
-        try:
-            publish_invoice_status(
-                invoice_id=invoice_id,
-                identity_uuid=customer_id,
-                status="cancelled",
-                amount=str(invoice.get("total", "0.00")),
-                correlation_id=msg_id,
-                channel=channel,
-            )
-        except Exception as status_err:
-            logging.warning("[RECEIVER] invoice_status failed for invoice_cancelled: %s", status_err)
+        publish_invoice_cancelled(invoice_id, identity_uuid, channel=channel)
         send_log("info", "invoice", f"Invoice {invoice_id} cancelled", channel=channel)
         logging.info("[RECEIVER][%s] Flow complete for invoice '%s'", msg_type, invoice_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)

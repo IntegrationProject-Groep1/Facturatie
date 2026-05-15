@@ -27,7 +27,6 @@ def parse(xml_str: str) -> ET.Element:
 
 @pytest.fixture
 def notification_xml(monkeypatch):
-    monkeypatch.setattr("src.services.rabbitmq_sender.BILLING_WEB_URL", "https://portal.yourdomain.com")
     with patch("src.services.rabbitmq_sender.validate_xml", return_value=(True, None)):
         return build_invoice_created_notification_xml(
             invoice_id=INVOICE_ID,
@@ -79,11 +78,11 @@ def test_notification_invoice_id(notification_xml) -> None:
     assert template_data["invoice_id"] == INVOICE_ID
 
 
-def test_notification_pdf_url_format(notification_xml) -> None:
+def test_notification_template_data_has_invoice_number(notification_xml) -> None:
     import json
     root = parse(notification_xml)
     template_data = json.loads(root.findtext("body/template_data"))
-    assert template_data["pdf_url"] == f"https://portal.yourdomain.com/invoice/{INVOICE_ID}"
+    assert "invoice_number" in template_data
 
 
 def test_notification_mail_type(notification_xml) -> None:

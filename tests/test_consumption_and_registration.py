@@ -46,10 +46,9 @@ def mock_identity():
 
 def _build_invoice_request_xml(
     msg_id: str = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5",
-    user_id: str = "BADGE-007",
-    company_name: str = "Company NV",
-    correlation_id: str = "corr-001",
-    customer_type: str = "private",
+    user_id: str = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc",
+    company_name: str = "Bedrijf NV",
+    correlation_id: str = "c3d4e5f6-a7b8-9012-cdef-012345678902",
     vat_number: str = "BE0123456789",
 ) -> bytes:
     """
@@ -70,14 +69,15 @@ def _build_invoice_request_xml(
     ET.SubElement(header, "correlation_id").text = correlation_id
 
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "user_id").text = user_id
+    ET.SubElement(body, "identity_uuid").text = user_id
 
     invoice_data = ET.SubElement(body, "invoice_data")
 
     contact = ET.SubElement(invoice_data, "contact")
     ET.SubElement(contact, "first_name").text = "Test"
     ET.SubElement(contact, "last_name").text = "User"
-    ET.SubElement(contact, "email").text = "info@bedrijf.be"
+
+    ET.SubElement(invoice_data, "email").text = "info@bedrijf.be"
 
     address = ET.SubElement(invoice_data, "address")
     ET.SubElement(address, "street").text = "Teststraat"
@@ -320,7 +320,8 @@ class TestProcessMessageInvoiceRequest:
                    return_value="INV-001"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
                    return_value="<xml>mock</xml>"), \
-             patch("src.services.rabbitmq_receiver.send_message"):
+             patch("src.services.rabbitmq_receiver.send_message"), \
+             patch.object(receiver.consumption_store, "save_invoice_correlation", create=True):
             process_message(channel, _make_method(), MagicMock(), body)
 
         channel.basic_ack.assert_called_once_with(delivery_tag=1)
@@ -426,6 +427,8 @@ class TestProcessMessageNewRegistration:
         channel = self._make_channel()
         with patch("src.services.rabbitmq_receiver.create_registration_invoice",
                    return_value="INV-001"), \
+             patch("src.services.rabbitmq_receiver.get_invoice", return_value={"hash": "abc123"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_pdf", return_value=b"%PDF-test"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
                    return_value="<xml>mock</xml>"):
             process_message(channel, _make_method(), MagicMock(), _build_new_registration_xml())
@@ -437,6 +440,8 @@ class TestProcessMessageNewRegistration:
         channel = self._make_channel()
         with patch("src.services.rabbitmq_receiver.create_registration_invoice",
                    return_value="INV-001"), \
+             patch("src.services.rabbitmq_receiver.get_invoice", return_value={"hash": "abc123"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_pdf", return_value=b"%PDF-test"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
                    return_value="<xml>mock</xml>"):
             process_message(channel, _make_method(), MagicMock(), _build_new_registration_xml())
@@ -468,6 +473,8 @@ class TestProcessMessageNewRegistration:
         channel = self._make_channel()
         with patch("src.services.rabbitmq_receiver.create_registration_invoice",
                    return_value="INV-001"), \
+             patch("src.services.rabbitmq_receiver.get_invoice", return_value={"hash": "abc123"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_pdf", return_value=b"%PDF-test"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
                    return_value="<xml>mock</xml>") as mock_builder:
             process_message(channel, _make_method(), MagicMock(), _build_new_registration_xml())
@@ -495,6 +502,8 @@ class TestProcessMessageEventEnded:
                    return_value={"email": "info@company.be", "company_name": "Company NV"}), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
                    return_value="INV-2026-001"), \
+             patch("src.services.rabbitmq_receiver.get_invoice", return_value={"hash": "abc123"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_pdf", return_value=b"%PDF-test"), \
              patch("src.services.rabbitmq_receiver.send_message"), \
              patch("src.services.rabbitmq_receiver.consumption_store.clear_by_ids"):
             process_message(channel, _make_method(), MagicMock(), body)
@@ -570,6 +579,8 @@ class TestProcessMessageEventEnded:
                    return_value={"email": "test@test.be", "company_name": "Test NV"}), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
                    return_value="INV-001"), \
+             patch("src.services.rabbitmq_receiver.get_invoice", return_value={"hash": "abc123"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_pdf", return_value=b"%PDF-test"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
                    side_effect=lambda **kw: sent.append(kw) or "<xml/>"), \
              patch("src.services.rabbitmq_receiver.send_message"), \

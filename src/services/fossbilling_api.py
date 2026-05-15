@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import time
+import threading
 import uuid
 import requests
 from dotenv import load_dotenv
@@ -11,6 +12,86 @@ import datetime as dt
 load_dotenv()
 
 MAX_RETRIES = 3
+
+_session_lock = threading.Lock()
+_admin_session: requests.Session | None = None
+
+
+def _login_admin() -> requests.Session:
+    web_url = os.getenv("BILLING_WEB_URL", "").rstrip("/")
+    email = os.getenv("BILLING_ADMIN_EMAIL", "")
+    password = os.getenv("BILLING_ADMIN_PASSWORD", "")
+
+    s = requests.Session()
+    login_page = s.get(f"{web_url}/admin", timeout=10)
+    m = re.search(r'csrf-token" content="([^"]+)"', login_page.text)
+    csrf = m.group(1) if m else ""
+
+    resp = s.post(
+        f"{web_url}/api/guest/staff/login",
+        data={"email": email, "password": password},
+        headers={"X-CSRF-Token": csrf},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    if result.get("error"):
+        raise Exception(f"FossBilling admin login failed: {result['error'].get('message')}")
+    logging.info("[FOSSBILLING] Admin web session established")
+    return s
+
+
+def _get_admin_session() -> requests.Session:
+    global _admin_session
+    with _session_lock:
+        if _admin_session is None:
+            _admin_session = _login_admin()
+        return _admin_session
+
+
+def _reset_admin_session() -> requests.Session:
+    global _admin_session
+    with _session_lock:
+        _admin_session = _login_admin()
+        return _admin_session
+
+
+def get_invoice_pdf(invoice_id: str, invoice_hash: str | None = None) -> bytes:
+    """Downloads the FossBilling-generated PDF for the given invoice.
+    Uses the admin web session. Re-authenticates automatically on session expiry.
+    Pass invoice_hash to skip an extra get_invoice() API call when the caller
+    already has the invoice data.
+    Raises FossBillingNotFoundError if the invoice does not exist.
+    """
+    if invoice_hash is None:
+        invoice = get_invoice(invoice_id)
+        if invoice is None:
+            raise FossBillingNotFoundError(f"Invoice {invoice_id} not found")
+        invoice_hash = invoice.get("hash")
+
+    if not invoice_hash:
+        raise Exception(f"Invoice {invoice_id} has no hash field")
+
+    web_url = os.getenv("BILLING_WEB_URL", "").rstrip("/")
+    pdf_url = f"{web_url}/admin/invoice/pdf/{invoice_hash}"
+
+    session = _get_admin_session()
+    resp = session.get(pdf_url, timeout=15)
+
+    if resp.status_code in (302, 401) or "text/html" in resp.headers.get("Content-Type", ""):
+        logging.warning("[FOSSBILLING] Admin session expired, re-authenticating for PDF download")
+        session = _reset_admin_session()
+        resp = session.get(pdf_url, timeout=15)
+
+    if resp.status_code == 404:
+        raise FossBillingNotFoundError(f"Invoice PDF not found: {invoice_id}")
+
+    resp.raise_for_status()
+
+    if "application/pdf" not in resp.headers.get("Content-Type", ""):
+        raise Exception(f"Expected PDF from FossBilling, got: {resp.headers.get('Content-Type')}")
+
+    return resp.content
 
 
 class FossBillingNotFoundError(Exception):
@@ -218,6 +299,21 @@ def get_invoice_status(invoice_id: str) -> str | None:
     return invoice.get("status") if invoice is not None else None
 
 
+def fetch_invoice_type_by_id(invoice_id: str) -> str:
+    """Bepaalt het type factuur: 'registration' of 'consumption' op basis van factuurlijnen."""
+    try:
+        response = _api_post("admin/invoice/get", {"id": invoice_id})
+        invoice = response.get("result", {})
+        lines = invoice.get("lines", [])
+        for line in lines:
+            if "Inschrijvingskosten" in line.get("title", ""):
+                return "registration"
+        return "consumption"
+    except Exception as e:
+        logging.warning("[FOSSBILLING] get_invoice_type failed for %s: %s", invoice_id, e)
+        return "consumption"
+
+
 def get_client_by_company_id(company_id: str) -> int | None:
     """Looks up a client by company_id in FossBilling. Returns client_id or None if not found."""
     result = _api_post("admin/client/get_list", {"search": company_id, "per_page": 100})
@@ -395,6 +491,17 @@ def cancel_invoice(invoice_id: str) -> bool:
         return True
     except Exception as e:
         logging.error("[FOSSBILLING] ERROR: Failed to cancel invoice '%s': %s", invoice_id, e)
+        return False
+
+
+def mark_invoice_as_refunded(invoice_id: str) -> bool:
+    """Maakt een creditnota aan voor een betaalde factuur."""
+    try:
+        _api_post("admin/invoice/update", {"id": invoice_id, "status": "refunded"})
+        logging.info("[FOSSBILLING] Credit note created for invoice '%s'", invoice_id)
+        return True
+    except Exception as e:
+        logging.error("[FOSSBILLING] Failed to create credit note for '%s': %s", invoice_id, e)
         return False
 
 

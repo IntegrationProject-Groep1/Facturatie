@@ -1,7 +1,6 @@
 # Documentation: Registration Invoice Flow
 
 **Project:** Facturatie Microservice
-**Branch:** `Inschrijvingskosten-flow`
 **Date:** 2026-04-05
 **Author:** Team Facturatie
 
