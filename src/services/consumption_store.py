@@ -16,7 +16,7 @@ def _get_pool() -> mysql.connector.pooling.MySQLConnectionPool:
         _pool = mysql.connector.pooling.MySQLConnectionPool(
             pool_name="facturatie_pool",
             pool_size=5,
-            host=os.getenv("MYSQL_HOST", "mysql"),
+            host=os.getenv("DB_HOST", "mysql"),
             database=os.getenv("MYSQL_DATABASE", "fossbilling"),
             user=os.getenv("MYSQL_USER"),
             password=os.getenv("MYSQL_PASSWORD"),
@@ -56,6 +56,7 @@ def init_db() -> None:
                 ("company_name", "VARCHAR(255) NOT NULL DEFAULT ''"),
                 ("email", "VARCHAR(255) NOT NULL DEFAULT ''"),
                 ("consumption_order_id", "VARCHAR(100) NOT NULL DEFAULT ''"),
+                ("session_id", "VARCHAR(255) NULL"),
             ]
 
             for col_name, col_def in migrations:
@@ -78,13 +79,41 @@ def init_db() -> None:
                 )
             """)
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS invoice_registry (
+                    id                INT AUTO_INCREMENT PRIMARY KEY,
+                    invoice_id        VARCHAR(100) NOT NULL,
+                    correlation_id    VARCHAR(100) NOT NULL,
+                    invoice_type      VARCHAR(50)  NOT NULL DEFAULT '',
+                    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_correlation_id (correlation_id),
+                    INDEX idx_invoice_id (invoice_id)
+                )
+            """)
+
+            migrations_registry = [
+                ("invoice_type", "VARCHAR(50) NOT NULL DEFAULT ''"),
+            ]
+
+            for col_name, col_def in migrations_registry:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() "
+                    "AND TABLE_NAME = 'invoice_registry' "
+                    "AND COLUMN_NAME = %s",
+                    (col_name,),
+                )
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute(f"ALTER TABLE invoice_registry ADD COLUMN {col_name} {col_def}")
+                    logging.info(f"[DB] Migration: Added column {col_name} to invoice_registry")
+
         conn.commit()
     except Exception as e:
         logging.error(f"[DB] Error initializing database: {e}")
         raise
     finally:
         conn.close()
-    logging.info("[DB] Tables ready (pending_consumptions, company_accounts)")
+        logging.info("[DB] Tables ready (pending_consumptions, company_accounts, invoice_registry)")
 
 
 def save_items(
@@ -102,12 +131,13 @@ def save_items(
     query = """
         INSERT INTO pending_consumptions
             (consumption_order_id, company_id, company_name, email, badge_id, master_uuid,
-             description, price, quantity, vat_rate)
+             description, price, quantity, vat_rate, session_id)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     data = [
         (consumption_order_id, company_id, company_name, email, badge_id, master_uuid,
-         i["description"], i["price"], i.get("quantity", 1), i.get("vat_rate", ""))
+         i["description"], i["price"], i.get("quantity", 1), i.get("vat_rate", ""),
+         i.get("session_id", None))
         for i in items
     ]
     conn = _get_connection()
@@ -181,6 +211,36 @@ def get_items_by_correlation_id(correlation_id: str) -> tuple[list[dict], list[i
     row_ids = [row["id"] for row in rows]
     company_id = rows[0]["company_id"] if rows else ""
     return items, row_ids, company_id
+
+
+def get_invoice_id_by_correlation_id(correlation_id: str) -> str:
+    """Zoekt invoice_id op via opgeslagen correlation_id."""
+    conn = _get_connection()
+    try:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute(
+                "SELECT invoice_id FROM invoice_registry WHERE correlation_id = %s LIMIT 1",
+                (correlation_id,)
+            )
+            row = cursor.fetchone()
+    finally:
+        conn.close()
+    return row["invoice_id"] if row else ""
+
+
+def save_invoice_correlation(invoice_id: str, correlation_id: str, invoice_type: str = "") -> None:
+    """Slaat invoice_id + correlation_id op in invoice_registry."""
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO invoice_registry (invoice_id, correlation_id, invoice_type)
+                VALUES (%s, %s, %s)
+            """, (invoice_id, correlation_id, invoice_type))
+        conn.commit()
+    finally:
+        conn.close()
+    logging.info("[DB] invoice_registry saved | invoice_id=%s | correlation_id=%s", invoice_id, correlation_id)
 
 
 def update_meta_by_correlation_id(
