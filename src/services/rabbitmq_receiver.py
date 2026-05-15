@@ -744,7 +744,7 @@ def process_message(
             return
 
         if status == "paid":
-            success = fossbilling_client.create_credit_note(invoice_id)
+            success = fossbilling_client.create_credit_note(invoice)
         else:
             success = fossbilling_client.cancel_invoice(invoice_id)
 
