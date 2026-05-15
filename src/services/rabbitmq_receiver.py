@@ -106,6 +106,8 @@ def extract_invoice_request_data(root: ET.Element) -> dict:
     return {
         "user_id": root.findtext("body/identity_uuid") or "",
         "correlation_id": root.findtext("header/correlation_id") or "",
+        "payment_status": root.findtext("body/payment_status") or "pending",
+        "payment_method": root.findtext("body/payment_method") or "",
         "customer": {
             "type": root.findtext("body/invoice_data/type")
             or ("company" if root.findtext("body/invoice_data/company_name") else "private"),
@@ -353,7 +355,7 @@ def process_message(
 
             consumption_store.save_invoice_correlation(
                 invoice_id=invoice_id,
-                correlation_id=correlation_id,
+                correlation_id=msg_id,
                 invoice_type="consumption",
             )
 
@@ -367,7 +369,7 @@ def process_message(
                 item_total = f"{sum(float(item.get('price') or 0) * item['quantity'] for item in items):.2f}"
                 publish_invoice_status(
                     invoice_id=invoice_id,
-                    identity_uuid=master_uuid,
+                    identity_uuid=user_id,
                     status="sent",
                     amount=item_total,
                     correlation_id=msg_id,
@@ -385,7 +387,7 @@ def process_message(
                     correlation_id=msg_id,
                     first_name=customer.get("first_name", ""),
                     last_name=customer.get("last_name", ""),
-                    identity_uuid=master_uuid,
+                    identity_uuid=user_id,
                     subject=f"Uw factuur {invoice_id} staat klaar",
                     invoice_data=_inv_data,
                     pdf_bytes=_pdf_bytes,
