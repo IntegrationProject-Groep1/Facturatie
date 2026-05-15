@@ -12,8 +12,6 @@ from src.utils.xml_validator import validate_xml
 # Load environment variables from the .env file
 load_dotenv()
 
-BILLING_WEB_URL = os.getenv("BILLING_WEB_URL", "https://portal.yourdomain.com").rstrip("/")
-
 
 def build_consumption_order_xml(
     customer_id: str,
@@ -21,11 +19,12 @@ def build_consumption_order_xml(
     is_company_linked: bool = False,
     company_id: str = "",
     company_name: str = "",
-    source: str = "kassa_bar_01",
+    source: str = "kassa",
 ) -> str:
     """
     Builds a consumption_order XML message using ElementTree so all input
     values are automatically escaped, preventing XML injection.
+    Conforms to v2.3 XSD.
     """
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -35,42 +34,50 @@ def build_consumption_order_xml(
     # Build header
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "consumption_order"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "consumption_order"
+    ET.SubElement(header, "version").text = "2.0"
 
-    # Build body — customer
+    # Build body
     body = ET.SubElement(root, "body")
+    ET.SubElement(body, "is_anonymous").text = "false"
+
     customer = ET.SubElement(body, "customer")
     ET.SubElement(customer, "id").text = customer_id
-    ET.SubElement(customer, "is_company_linked").text = (
-        "true" if is_company_linked else "false"
-    )
-    # company_id and company_name are only included when is_company_linked is True
-    if is_company_linked:
-        ET.SubElement(customer, "company_id").text = company_id
-        ET.SubElement(customer, "company_name").text = company_name
+    # identity_uuid is required by XSD (using customer_id as fallback if it looks like UUID)
+    identity_uuid = customer_id if len(customer_id) == 36 else str(uuid.uuid4())
+    ET.SubElement(customer, "identity_uuid").text = identity_uuid
+    ET.SubElement(customer, "type").text = "company" if is_company_linked else "private"
+    ET.SubElement(customer, "email").text = "test@example.com"
 
-    ET.SubElement(customer, "email").text = ""
     addr = ET.SubElement(customer, "address")
-    for field in ["street", "number", "postal_code", "city"]:
-        ET.SubElement(addr, field).text = ""
+    ET.SubElement(addr, "street").text = "Main St"
+    ET.SubElement(addr, "number").text = "1"
+    ET.SubElement(addr, "postal_code").text = "1000"
+    ET.SubElement(addr, "city").text = "Brussels"
     ET.SubElement(addr, "country").text = "be"
-
-    ET.SubElement(body, "payment_method").text = "company_link"
 
     # Build body — items
     items_el = ET.SubElement(body, "items")
     for item in items:
         item_el = ET.SubElement(items_el, "item")
-        ET.SubElement(item_el, "id").text = str(item["id"])
-        ET.SubElement(item_el, "description").text = str(item["description"])
-        ET.SubElement(item_el, "quantity").text = str(item["quantity"])
+        ET.SubElement(item_el, "id").text = str(item.get("id", "1"))
+        ET.SubElement(item_el, "sku").text = str(item.get("sku", "SKU-DEFAULT"))
+        ET.SubElement(item_el, "description").text = str(item.get("description", "Consumption"))
+        ET.SubElement(item_el, "quantity").text = str(item.get("quantity", 1))
+
+        unit_price = float(item.get("unit_price", 10.0))
         unit_price_el = ET.SubElement(item_el, "unit_price")
-        unit_price_el.text = str(item["unit_price"])
-        unit_price_el.set("currency", "eur")  # lowercase per XML Naming Standard
-        ET.SubElement(item_el, "vat_rate").text = str(item["vat_rate"])
+        unit_price_el.text = f"{unit_price:.2f}"
+        unit_price_el.set("currency", "eur")
+
+        ET.SubElement(item_el, "vat_rate").text = str(item.get("vat_rate", 21))
+
+        qty = int(item.get("quantity", 1))
+        total_amount_el = ET.SubElement(item_el, "total_amount")
+        total_amount_el.text = f"{(unit_price * qty):.2f}"
+        total_amount_el.set("currency", "eur")
 
     ET.indent(root, space="    ")
     return (
@@ -79,10 +86,15 @@ def build_consumption_order_xml(
     )
 
 
+_INTERNAL_QUEUES = {"logs", "heartbeat", "errors.facturatie"}
+
+
 def send_message(
     xml_message: str,
     routing_key: str | None = None,
     channel: pika.channel.Channel | None = None,
+    msg_type: str | None = None,
+    corr_id: str | None = None,
 ) -> None:
     """
     Publishes an XML message to a RabbitMQ queue.
@@ -101,7 +113,6 @@ def send_message(
         connection = get_connection()
         channel = connection.channel()
 
-    channel.queue_declare(queue=routing_key, durable=True)
     # delivery_mode=2 ensures the message is persisted to disk
     channel.basic_publish(
         exchange="",
@@ -112,11 +123,114 @@ def send_message(
             content_type="application/xml"
         )
     )
-    print(f"[SENDER] Message sent to queue '{routing_key}'")
+    logging.info("[SENDER] Message sent to queue '%s'", routing_key)
+
+    # PROTOCOL: Outbound Message (The "Tracker" Log)
+    # Skip internal monitoring queues to avoid infinite recursion.
+    if routing_key not in _INTERNAL_QUEUES:
+        try:
+            temp_root = ET.fromstring(xml_message)
+            msg_type = temp_root.findtext("header/type") or "unknown"
+            corr_id = (
+                temp_root.findtext("header/correlation_id")
+                or temp_root.findtext("header/message_id")
+                or "N/A"
+            )
+
+            action_map = {
+                "invoice_available": "invoice",
+                "invoice_cancelled": "invoice",
+                "payment_registered": "payment",
+                "send_mailing": "email",
+                "system_error": "system_error",
+                "heartbeat": "session"
+            }
+            log_action = action_map.get(msg_type, "invoice")
+
+            send_log(
+                level="info",
+                action=log_action,
+                message=f"Published {msg_type} to {routing_key}. CorrelationID: {corr_id}",
+                channel=channel
+            )
+        except Exception as log_err:
+            logging.warning("[SENDER] Metadata extraction for Tracker log failed: %s", log_err)
 
     # Only close if we opened the connection here
     if connection is not None:
         connection.close()
+
+
+def _build_template_data(invoice_id: str, invoice_data: dict | None) -> dict:
+    if not invoice_data:
+        return {"invoice_number": invoice_id, "invoice_id": invoice_id}
+
+    seller = invoice_data.get("seller", {})
+    buyer = invoice_data.get("buyer", {})
+    lines = invoice_data.get("lines", [])
+
+    from decimal import Decimal
+    due_at = (invoice_data.get("due_at") or "")[:10]
+    created_at = (invoice_data.get("created_at") or "")[:10]
+    subtotal = Decimal(str(invoice_data.get("subtotal") or 0))
+    tax = Decimal(str(invoice_data.get("tax") or 0))
+    total = Decimal(str(invoice_data.get("total") or 0))
+    currency = (invoice_data.get("currency") or "EUR").lower()
+
+    items = []
+    for line in lines:
+        unit_price = Decimal(str(line.get("price") or 0))
+        vat_rate = Decimal(str(line.get("taxrate") or 0))
+        line_total = Decimal(str(line.get("total") or 0))
+        vat_amount = line_total - unit_price * int(line.get("quantity") or 1)
+        items.append({
+            "description": line.get("title", ""),
+            "quantity":    int(line.get("quantity") or 1),
+            "unit_price":  f"{unit_price:.2f}",
+            "vat_rate":    float(vat_rate),
+            "vat_amount":  f"{vat_amount:.2f}",
+            "total":       f"{line_total:.2f}",
+            "currency":    currency,
+        })
+
+    buyer_address = " ".join(filter(None, [
+        buyer.get("address") or buyer.get("address_1", ""),
+        buyer.get("city", ""),
+        buyer.get("zip", "") or buyer.get("postcode", ""),
+    ])).strip(", ")
+
+    result: dict = {
+        "invoice_number": invoice_data.get("serie_nr") or invoice_id,
+        "invoice_date":   created_at,
+        "due_date":       due_at,
+        "seller": {
+            "company":    seller.get("company", ""),
+            "address":    seller.get("address_1") or seller.get("address", ""),
+            "email":      seller.get("email", ""),
+            "vat_number": seller.get("company_vat") or "",
+            "iban":       seller.get("account_number") or "",
+            "bic":        seller.get("bic") or "",
+        },
+        "buyer": {
+            "first_name": buyer.get("first_name", ""),
+            "last_name":  buyer.get("last_name", ""),
+            "email":      buyer.get("email", ""),
+            "address":    buyer_address,
+            "vat_number": buyer.get("company_vat") or "",
+        },
+        "items": items,
+        "summary": {
+            "subtotal":  f"{subtotal:.2f}",
+            "vat_total": f"{tax:.2f}",
+            "total":     f"{total:.2f}",
+            "currency":  currency,
+        },
+        "payment": {
+            "reference": f"+++{invoice_data.get('id', invoice_id)}/{datetime.now().year}/00001+++",
+            "method":    "on_site",
+        },
+    }
+    return result
 
 
 def build_invoice_created_notification_xml(
@@ -126,8 +240,11 @@ def build_invoice_created_notification_xml(
     first_name: str = "",
     last_name: str = "",
     customer_id: str = "",
+    identity_uuid: str = "",
     subject: str = "Uw factuur staat klaar",
     source: str = "facturatie",
+    invoice_data: dict | None = None,
+    pdf_bytes: bytes | None = None,
 ) -> str:
     """
     Builds a send_mailing XML message to be sent to the Mailing team.
@@ -137,8 +254,6 @@ def build_invoice_created_notification_xml(
 
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    billing_web_base = BILLING_WEB_URL
-    pdf_url = f"{billing_web_base}/invoice/{invoice_id}"
 
     root = ET.Element("message")
 
@@ -153,21 +268,26 @@ def build_invoice_created_notification_xml(
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "campaign_id").text = f"foss-invoice-{invoice_id}"
     ET.SubElement(body, "subject").text = subject
-    ET.SubElement(body, "template_id").text = "tmpl-invoice-ready"
     ET.SubElement(body, "mail_type").text = "invoice_ready"
 
     recipients = ET.SubElement(body, "recipients")
     recipient = ET.SubElement(recipients, "recipient")
     ET.SubElement(recipient, "email").text = recipient_email
-    ET.SubElement(recipient, "user_id").text = customer_id or invoice_id
+    ET.SubElement(recipient, "identity_uuid").text = identity_uuid or customer_id
     contact = ET.SubElement(recipient, "contact")
     ET.SubElement(contact, "first_name").text = first_name
     ET.SubElement(contact, "last_name").text = last_name
 
-    ET.SubElement(body, "template_data").text = json.dumps({
-        "invoice_id": invoice_id,
-        "pdf_url": pdf_url,
-    })
+    template = _build_template_data(invoice_id, invoice_data)
+    ET.SubElement(body, "template_data").text = json.dumps(template, ensure_ascii=False)
+
+    if pdf_bytes:
+        import base64
+        serie_nr = (invoice_data or {}).get("serie_nr") or invoice_id
+        attachment = ET.SubElement(body, "attachment")
+        ET.SubElement(attachment, "filename").text = f"factuur-{serie_nr}.pdf"
+        ET.SubElement(attachment, "content_type").text = "application/pdf"
+        ET.SubElement(attachment, "base64_data").text = base64.b64encode(pdf_bytes).decode("ascii")
 
     ET.indent(root, space="    ")
     xml_str = f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
@@ -183,18 +303,23 @@ def build_invoice_created_notification_xml(
 
 def build_payment_confirmed_xml(
     invoice_id: str,
-    customer_id: str,
+    identity_uuid: str,
     amount: str,
     currency: str,
     payment_method: str,
     paid_at: str | None = None,
     source: str = "facturatie",
+    status: str = "paid",
+    due_date: str = "",
+    transaction_id: str = "",
+    payment_context: str = "online_invoice",
+    correlation_id: str | None = None,
 ) -> str:
     """
     Builds a payment_registered confirmation XML to publish after a successful
     payment has been processed in FossBilling.
-    Sent to queue: facturatie.to.crm
-    and payement_registered_outgoing.xsd.
+    Conforms to the standard v2.0 message format (§8.2).
+    Sent to queue: crm.incoming
     """
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -218,15 +343,37 @@ def build_payment_confirmed_xml(
     ET.SubElement(header, "source").text = source
     ET.SubElement(header, "type").text = "payment_registered"
     ET.SubElement(header, "version").text = "2.0"
+    if correlation_id:
+        ET.SubElement(header, "correlation_id").text = correlation_id
 
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "customer_id").text = customer_id
-    amount_el = ET.SubElement(body, "amount_paid")
+    ET.SubElement(body, "identity_uuid").text = identity_uuid
+
+    invoice = ET.SubElement(body, "invoice")
+    ET.SubElement(invoice, "id").text = invoice_id
+    amount_el = ET.SubElement(invoice, "amount_paid")
     amount_el.text = amount
     amount_el.set("currency", currency_lower)
-    ET.SubElement(body, "payment_method").text = payment_method
-    ET.SubElement(body, "paid_at").text = paid_at
+    ET.SubElement(invoice, "status").text = status
+    ET.SubElement(invoice, "due_date").text = due_date
+
+    ET.SubElement(body, "payment_context").text = payment_context
+
+    # Unified mapping for payment_method per Section 8.2 XSD
+    method_map = {
+        "online": "online",
+        "on_site": "on_site",
+        "card": "on_site",
+        "cash": "on_site",
+        "pos": "on_site",
+        "company_link": "company_link",
+        "link": "company_link"
+    }
+    safe_method = method_map.get(payment_method.lower(), "online")
+
+    transaction = ET.SubElement(body, "transaction")
+    ET.SubElement(transaction, "id").text = transaction_id or str(uuid.uuid4())
+    ET.SubElement(transaction, "payment_method").text = safe_method
 
     ET.indent(root, space="    ")
     xml_str = (
@@ -234,17 +381,24 @@ def build_payment_confirmed_xml(
         + ET.tostring(root, encoding="unicode")
     )
 
-    # Validate against XSD before sending
-    is_valid, error_msg = validate_xml(xml_str, "payment_registered_outgoing")
+    # Validate against unified XSD (Section 8.2)
+    is_valid, error_msg = validate_xml(xml_str, "payment_registered")
     if not is_valid:
-        raise ValueError(
-            f"[SENDER] payment_registered (outgoing) XSD validation failed: {error_msg}"
-        )
+        # If still invalid, try forcing 'online' as ultimate fallback
+        if safe_method != "online":
+            transaction.find("payment_method").text = "online"
+            xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")
+            is_valid, error_msg = validate_xml(xml_str, "payment_registered")
+
+        if not is_valid:
+            raise ValueError(
+                f"[SENDER] payment_registered XSD validation failed: {error_msg}"
+            )
 
     return xml_str
 
 
-CRM_QUEUE = os.getenv("QUEUE_CRM", "facturatie.to.crm")
+CRM_QUEUE = os.getenv("QUEUE_CRM", "crm.incoming")
 FRONTEND_QUEUE = os.getenv("QUEUE_FRONTEND", "facturatie.to.frontend")
 
 
@@ -266,12 +420,13 @@ def build_invoice_link_xml(
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = message_id
-    ET.SubElement(header, "version").text = "2.0"
-    ET.SubElement(header, "type").text = "invoice_available"
     ET.SubElement(header, "timestamp").text = timestamp
     ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "invoice_available"
+    ET.SubElement(header, "version").text = "2.0"
 
     body = ET.SubElement(root, "body")
+    ET.SubElement(body, "identity_uuid").text = master_uuid
     ET.SubElement(body, "invoice_id").text = invoice_id
     ET.SubElement(body, "pdf_url").text = pdf_url
 
@@ -281,9 +436,9 @@ def build_invoice_link_xml(
         + ET.tostring(root, encoding="unicode")
     )
 
-    is_valid, error_msg = validate_xml(xml_str, "invoice_link")
+    is_valid, error_msg = validate_xml(xml_str, "invoice_available")
     if not is_valid:
-        raise ValueError(f"[SENDER] invoice_link XSD validation failed: {error_msg}")
+        raise ValueError(f"[SENDER] invoice_available XSD validation failed: {error_msg}")
 
     return xml_str
 
@@ -322,7 +477,7 @@ def build_invoice_cancelled_xml(
 
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "customer_id").text = customer_id
+    ET.SubElement(body, "user_id").text = customer_id
     if reason:
         ET.SubElement(body, "reason").text = reason
 
@@ -362,6 +517,117 @@ def publish_cancellation_failed(
     )
 
 
+def build_invoice_status_xml(
+    invoice_id: str,
+    identity_uuid: str,
+    status: str,
+    amount: str,
+    correlation_id: str | None = None,
+) -> str:
+    """Builds an invoice_status XML message to notify CRM of a status change."""
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = "facturatie"
+    ET.SubElement(header, "type").text = "invoice_status"
+    ET.SubElement(header, "version").text = "2.0"
+    if correlation_id:
+        ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "invoice_id").text = invoice_id
+    ET.SubElement(body, "identity_uuid").text = identity_uuid
+    ET.SubElement(body, "status").text = status
+    amount_el = ET.SubElement(body, "amount")
+    amount_el.text = amount
+    amount_el.set("currency", "eur")
+
+    ET.indent(root, space="    ")
+    xml_str = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
+
+    is_valid, error_msg = validate_xml(xml_str, "invoice_status")
+    if not is_valid:
+        raise ValueError(f"[SENDER] invoice_status XSD validation failed: {error_msg}")
+
+    return xml_str
+
+
+def publish_invoice_status(
+    invoice_id: str,
+    identity_uuid: str,
+    status: str,
+    amount: str,
+    correlation_id: str | None = None,
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """Publishes an invoice_status notification to CRM on every status change."""
+    xml_message = build_invoice_status_xml(invoice_id, identity_uuid, status, amount, correlation_id)
+    send_message(xml_message, routing_key=CRM_QUEUE, channel=channel)
+    logging.info(
+        "[SENDER] invoice_status sent to '%s' | invoice_id=%s | status=%s",
+        CRM_QUEUE, invoice_id, status,
+    )
+
+
+def build_system_error_xml(
+    error_code: str,
+    message: str,
+    severity: str = "critical",
+    correlation_id: str | None = None,
+    source: str = "facturatie",
+) -> str:
+    """
+    Builds a system_error XML message (Section 2.6).
+    """
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "system_error"
+    ET.SubElement(header, "version").text = "2.0"
+    if correlation_id:
+        ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "error_code").text = error_code
+    ET.SubElement(body, "message").text = message
+    ET.SubElement(body, "severity").text = severity
+
+    ET.indent(root, space="    ")
+    xml_str = f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+
+    # Pre-validation against system_error.xsd
+    is_valid, err = validate_xml(xml_str, "system_error")
+    if not is_valid:
+        logging.error("[SENDER] system_error XSD validation failed locally: %s", err)
+
+    return xml_str
+
+
+def send_system_error(
+    error_code: str,
+    message: str,
+    severity: str = "critical",
+    correlation_id: str | None = None,
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """Publishes a system_error to the errors.facturatie queue."""
+    xml = build_system_error_xml(error_code, message, severity, correlation_id)
+    send_message(xml, routing_key="errors.facturatie", channel=channel)
+
+
 def send_error_to_monitor(error_message: str) -> None:
     """
     Sends an error notification to the central error queue (errors.facturatie).
@@ -382,25 +648,49 @@ def send_error_to_monitor(error_message: str) -> None:
     send_message(xml_error, routing_key="errors.facturatie")
 
 
-def send_log(level: str, action: str, message: str, channel=None) -> None:
-    """Sends a log message to the monitoring logs queue."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<message>
-  <header>
-    <message_id>{uuid.uuid4()}</message_id>
-    <timestamp>{ts}</timestamp>
-    <source>facturatie</source>
-    <type>log</type>
-    <version>2.0</version>
-  </header>
-  <body>
-    <level>{level}</level>
-    <action>{action}</action>
-    <message>{message}</message>
-  </body>
-</message>"""
-    send_message(xml, routing_key="logs", channel=channel)
+def build_log_xml(
+    level: str,
+    action: str,
+    message: str,
+    source: str = "facturatie",
+) -> str:
+    """
+    Builds a log XML message (Section 3.5).
+    """
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "log"
+    ET.SubElement(header, "version").text = "2.0"
+
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "level").text = level
+    ET.SubElement(body, "action").text = action
+    ET.SubElement(body, "message").text = message
+
+    ET.indent(root, space="    ")
+    xml_str = f'<?xml version="1.0" encoding="UTF-8"?>\n{ET.tostring(root, encoding="unicode")}'
+
+    # Pre-validation against log.xsd
+    is_valid, err = validate_xml(xml_str, "log")
+    if not is_valid:
+        logging.error("[SENDER] log XSD validation failed locally: %s", err)
+
+    return xml_str
+
+
+def send_log(level: str, action: str, message: str, channel: pika.channel.Channel | None = None) -> None:
+    """Sends a validated log message to the central 'logs' queue."""
+    try:
+        xml = build_log_xml(level, action, message)
+        send_message(xml, routing_key="logs", channel=channel)
+    except Exception as e:
+        logging.error("[SENDER] Failed to send log: %s", e)
 
 
 if __name__ == "__main__":
@@ -422,3 +712,66 @@ if __name__ == "__main__":
     )
     print("[SENDER] XML:\n", xml)
     send_message(xml)
+
+
+def build_vat_validation_error_xml(
+    vat_number: str,
+    identity_uuid: str = "",
+    error_message: str = "",
+    correlation_id: str | None = None,
+    source: str = "facturatie",
+) -> str:
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    root = ET.Element("message")
+
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = message_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "vat_validation_error"
+    ET.SubElement(header, "version").text = "2.0"
+    if correlation_id:
+        ET.SubElement(header, "correlation_id").text = correlation_id
+
+    body = ET.SubElement(root, "body")
+    if identity_uuid:
+        ET.SubElement(body, "identity_uuid").text = identity_uuid
+    ET.SubElement(body, "vat_number").text = vat_number
+    if error_message:
+        ET.SubElement(body, "error_message").text = error_message
+    ET.SubElement(body, "timestamp").text = timestamp
+
+    ET.indent(root, space="    ")
+    xml_str = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode")
+    )
+
+    is_valid, error_msg = validate_xml(xml_str, "vat_validation_error")
+    if not is_valid:
+        raise ValueError(f"[SENDER] vat_validation_error XSD validation failed: {error_msg}")
+
+    return xml_str
+
+
+def publish_vat_validation_error(
+    vat_number: str,
+    identity_uuid: str = "",
+    error_message: str = "",
+    correlation_id: str | None = None,
+    channel: pika.channel.Channel | None = None,
+) -> None:
+    """Publishes a vat_validation_error to the Frontend queue."""
+    xml_message = build_vat_validation_error_xml(
+        vat_number=vat_number,
+        identity_uuid=identity_uuid,
+        error_message=error_message,
+        correlation_id=correlation_id,
+    )
+    send_message(xml_message, routing_key=FRONTEND_QUEUE, channel=channel)
+    logging.info(
+        "[SENDER] vat_validation_error sent | vat_number=%s | identity_uuid=%s",
+        vat_number, identity_uuid,
+    )

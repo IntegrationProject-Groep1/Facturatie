@@ -1,13 +1,13 @@
 """
-Tests voor de invoice_request en new_registration message flows.
-Consolideert: test_consumption_order.py + test_process_new_registration.py
+Tests for the invoice_request and new_registration message flows.
+Consolidates: test_consumption_order.py + test_process_new_registration.py
 
-Belangrijke wijzigingen t.o.v. vorige versie:
-- invoice_request XML builder: oude <customer>/<items> structuur vervangen door
-  <user_id> + <invoice_data> conform contract §11.1
-- master_uuid verwijderd uit alle headers (contract #90)
-- consumption_store.save_items → save_invoice_request (nieuwe receiver logica)
-- Namen zitten in <contact> wrapper bij new_registration (contract Regel 2)
+Key changes compared to previous version:
+- invoice_request XML builder: old <customer>/<items> structure replaced by
+  <user_id> + <invoice_data> per contract §11.1
+- master_uuid removed from all headers (contract #90)
+- consumption_store.save_items → save_invoice_request (new receiver logic)
+- Names are in <contact> wrapper in new_registration (contract Rule 2)
 """
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -51,16 +51,16 @@ def _build_invoice_request_xml(
     correlation_id: str = "c3d4e5f6-a7b8-9012-cdef-012345678902",
 ) -> bytes:
     """
-    Bouwt een invoice_request XML conform de nieuwe structuur (contract §11.1).
-    Geen master_uuid in header, geen <customer>/<items> blokken.
+    Builds an invoice_request XML conforming to the new structure (contract §11.1).
+    No master_uuid in header, no <customer>/<items> blocks.
     """
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     root = ET.Element("message")
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
-    # Volgorde conform XSD: message_id → type → source → timestamp → version → correlation_id
-    # master_uuid VERWIJDERD — verboden in alle headers (contract #90)
+    # Order per XSD: message_id → type → source → timestamp → version → correlation_id
+    # master_uuid REMOVED — forbidden in all headers (contract #90)
     ET.SubElement(header, "type").text = "invoice_request"
     ET.SubElement(header, "source").text = "crm"
     ET.SubElement(header, "timestamp").text = timestamp
@@ -71,20 +71,25 @@ def _build_invoice_request_xml(
     ET.SubElement(body, "identity_uuid").text = user_id
 
     invoice_data = ET.SubElement(body, "invoice_data")
-    # Volgorde conform InvoiceDataType XSD: first_name → last_name → email → address → company_name → vat_number
-    ET.SubElement(invoice_data, "first_name").text = "Test"
-    ET.SubElement(invoice_data, "last_name").text = "User"
-    ET.SubElement(invoice_data, "email").text = "info@bedrijf.be"
+
+    contact = ET.SubElement(invoice_data, "contact")
+    ET.SubElement(contact, "first_name").text = "Test"
+    ET.SubElement(contact, "last_name").text = "User"
+    ET.SubElement(contact, "email").text = "info@bedrijf.be"
 
     address = ET.SubElement(invoice_data, "address")
     ET.SubElement(address, "street").text = "Teststraat"
     ET.SubElement(address, "number").text = "1"
     ET.SubElement(address, "postal_code").text = "1000"
-    ET.SubElement(address, "city").text = "Brussel"
+    ET.SubElement(address, "city").text = "Brussels"
     ET.SubElement(address, "country").text = "be"
 
-    ET.SubElement(invoice_data, "company_name").text = company_name
-    ET.SubElement(invoice_data, "vat_number").text = "BE0123456789"
+    if company_name:
+        ET.SubElement(invoice_data, "company_name").text = company_name
+    else:
+        ET.SubElement(invoice_data, "company_name").text = ""
+
+    ET.SubElement(invoice_data, "vat_number").text = vat_number
 
     ET.indent(root, space="    ")
     return (
@@ -113,7 +118,7 @@ def _build_new_registration_xml() -> bytes:
         <last_name>User</last_name>
       </contact>
       <type>company</type>
-      <company_name>Test Bedrijf NV</company_name>
+      <company_name>Test Company NV</company_name>
       <vat_number>BE0123456789</vat_number>
       <company_id>comp-001</company_id>
       <session_id>sess-001</session_id>
@@ -178,18 +183,11 @@ def test_extract_customer_data_fee() -> None:
 
 
 def test_extract_customer_data_names_from_contact_wrapper() -> None:
-    """Namen worden gelezen via body/customer/contact/ (contract Regel 2)."""
+    """Names are read via body/customer/contact/ (contract Rule 2)."""
     root = ET.fromstring(_build_new_registration_xml())
     data = extract_customer_data(root)
     assert data["first_name"] == "Test"
     assert data["last_name"] == "User"
-
-
-def test_extract_customer_data_fee() -> None:
-    root = ET.fromstring(_build_new_registration_xml())
-    data = extract_customer_data(root)
-    assert data["registration_fee"] == "150.00"
-    assert data["fee_currency"] == "eur"
 
 
 def test_extract_customer_data_address() -> None:
@@ -304,7 +302,7 @@ class TestProcessConsumptionOrder:
 class TestProcessMessageInvoiceRequest:
 
     def test_happy_path_acks_message(self):
-        """Geldig invoice_request bericht → items ophalen, factuur maken, geacked."""
+        """Valid invoice_request message → fetch items, create invoice, acked."""
         channel = MagicMock()
         body = _build_invoice_request_xml(msg_id="11111111-1111-4111-1111-111111111111")
 
@@ -313,7 +311,8 @@ class TestProcessMessageInvoiceRequest:
              patch.object(receiver.consumption_store, "update_meta_by_correlation_id",
                           create=True), \
              patch.object(receiver.consumption_store, "get_items_by_correlation_id",
-                          create=True, return_value=([{"title": "Cola", "price": "2.50", "quantity": 1}], [1], "company-001")), \
+                          create=True,
+                          return_value=([{"title": "Cola", "price": "2.50", "quantity": 1}], [1], "company-001")), \
              patch.object(receiver.consumption_store, "clear_by_ids", create=True), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
                    return_value="INV-001"), \
@@ -327,7 +326,7 @@ class TestProcessMessageInvoiceRequest:
         channel.basic_nack.assert_not_called()
 
     def test_user_id_and_correlation_id_saved(self):
-        """correlation_id wordt gebruikt om items op te halen uit de DB."""
+        """correlation_id is used to retrieve items from the DB."""
         channel = MagicMock()
         body = _build_invoice_request_xml(
             msg_id="11111111-1111-4111-1111-111111111112",
@@ -346,12 +345,13 @@ class TestProcessMessageInvoiceRequest:
         args = str(mock_get.call_args)
         assert "corr-xyz" in args
 
-    def test_missing_company_name_sends_to_dlq(self):
-        """invoice_request zonder company_name → DLQ (Facturatie vereist bedrijfsklant)."""
+    def test_missing_vat_number_sends_to_dlq(self):
+        """invoice_request with company_name but without vat_number → DLQ."""
         channel = MagicMock()
         body = _build_invoice_request_xml(
             msg_id="11111111-1111-4111-1111-111111111113",
-            company_name="",
+            company_name="Bedrijf NV",
+            vat_number="",
         )
 
         with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
@@ -361,7 +361,7 @@ class TestProcessMessageInvoiceRequest:
         channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
 
     def test_db_failure_sends_to_dlq(self):
-        """DB fout bij ophalen items → DLQ en nack."""
+        """DB error when fetching items → DLQ and nack."""
         channel = MagicMock()
         body = _build_invoice_request_xml(msg_id="44444444-4444-4444-4444-444444444444")
 
@@ -425,6 +425,8 @@ class TestProcessMessageNewRegistration:
         channel = self._make_channel()
         with patch("src.services.rabbitmq_receiver.create_registration_invoice",
                    return_value="INV-001"), \
+             patch("src.services.rabbitmq_receiver.get_invoice", return_value={"hash": "abc123"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_pdf", return_value=b"%PDF-test"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
                    return_value="<xml>mock</xml>"):
             process_message(channel, _make_method(), MagicMock(), _build_new_registration_xml())
@@ -436,6 +438,8 @@ class TestProcessMessageNewRegistration:
         channel = self._make_channel()
         with patch("src.services.rabbitmq_receiver.create_registration_invoice",
                    return_value="INV-001"), \
+             patch("src.services.rabbitmq_receiver.get_invoice", return_value={"hash": "abc123"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_pdf", return_value=b"%PDF-test"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
                    return_value="<xml>mock</xml>"):
             process_message(channel, _make_method(), MagicMock(), _build_new_registration_xml())
@@ -463,10 +467,12 @@ class TestProcessMessageNewRegistration:
         assert "fossbilling_failed" in error_str
 
     def test_notification_uses_correlation_id_not_master_uuid(self) -> None:
-        """build_invoice_created_notification_xml moet correlation_id krijgen, geen master_uuid."""
+        """build_invoice_created_notification_xml must receive correlation_id, not master_uuid."""
         channel = self._make_channel()
         with patch("src.services.rabbitmq_receiver.create_registration_invoice",
                    return_value="INV-001"), \
+             patch("src.services.rabbitmq_receiver.get_invoice", return_value={"hash": "abc123"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_pdf", return_value=b"%PDF-test"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
                    return_value="<xml>mock</xml>") as mock_builder:
             process_message(channel, _make_method(), MagicMock(), _build_new_registration_xml())
@@ -491,9 +497,11 @@ class TestProcessMessageEventEnded:
              patch("src.services.rabbitmq_receiver.consumption_store.get_items_for_company",
                    return_value=([{"title": "Coca-Cola", "price": "2.50", "quantity": 1, "vat_rate": "21"}], [1])), \
              patch("src.services.rabbitmq_receiver.consumption_store.get_company_meta",
-                   return_value={"email": "info@bedrijf.be", "company_name": "Bedrijf NV"}), \
+                   return_value={"email": "info@company.be", "company_name": "Company NV"}), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
                    return_value="INV-2026-001"), \
+             patch("src.services.rabbitmq_receiver.get_invoice", return_value={"hash": "abc123"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_pdf", return_value=b"%PDF-test"), \
              patch("src.services.rabbitmq_receiver.send_message"), \
              patch("src.services.rabbitmq_receiver.consumption_store.clear_by_ids"):
             process_message(channel, _make_method(), MagicMock(), body)
@@ -554,7 +562,7 @@ class TestProcessMessageEventEnded:
         mock_clear.assert_called_once_with([42])
 
     def test_event_ended_uses_msg_id_as_correlation_id(self):
-        """Mailing notificatie moet correlation_id=msg_id krijgen, geen master_uuid."""
+        """Mailing notification must receive correlation_id=msg_id, not master_uuid."""
         channel = MagicMock()
         body = _build_event_ended_xml(msg_id="eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee")
         sent = []
@@ -569,8 +577,10 @@ class TestProcessMessageEventEnded:
                    return_value={"email": "test@test.be", "company_name": "Test NV"}), \
              patch("src.services.rabbitmq_receiver.fossbilling_client.process_consumption_order",
                    return_value="INV-001"), \
+             patch("src.services.rabbitmq_receiver.get_invoice", return_value={"hash": "abc123"}), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_pdf", return_value=b"%PDF-test"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
-                   side_effect=lambda **kw: sent.append(kw) or "<xml/>") as mock_builder, \
+                   side_effect=lambda **kw: sent.append(kw) or "<xml/>"), \
              patch("src.services.rabbitmq_receiver.send_message"), \
              patch("src.services.rabbitmq_receiver.consumption_store.clear_by_ids"):
             process_message(channel, _make_method(), MagicMock(), body)
@@ -578,3 +588,129 @@ class TestProcessMessageEventEnded:
         assert len(sent) == 1
         assert sent[0]["correlation_id"] == "eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee"
         assert "master_uuid" not in sent[0]
+
+
+# ── process_message: payment_registered handler (partial payment) ─────────────
+
+def _build_payment_registered_xml(
+    msg_id: str = "cccccccc-cccc-4ccc-cccc-cccccccccccc",
+    invoice_id: str = "42",
+    amount: str = "300.00",
+    currency: str = "eur",
+    payment_method: str = "on_site",
+    due_date: str = "2026-12-31",
+) -> bytes:
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    root = ET.Element("message")
+    header = ET.SubElement(root, "header")
+    ET.SubElement(header, "message_id").text = msg_id
+    ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = "kassa"
+    ET.SubElement(header, "type").text = "payment_registered"
+    ET.SubElement(header, "version").text = "2.0"
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "identity_uuid").text = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    invoice = ET.SubElement(body, "invoice")
+    ET.SubElement(invoice, "id").text = invoice_id
+    amount_el = ET.SubElement(invoice, "amount_paid")
+    amount_el.text = amount
+    amount_el.set("currency", currency)
+    ET.SubElement(invoice, "status").text = "paid"
+    ET.SubElement(invoice, "due_date").text = due_date
+    ET.SubElement(body, "payment_context").text = "consumption"
+    transaction = ET.SubElement(body, "transaction")
+    ET.SubElement(transaction, "id").text = "TRANS-001"
+    ET.SubElement(transaction, "payment_method").text = payment_method
+    ET.indent(root, space="    ")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")).encode("utf-8")
+
+
+class TestPaymentRegisteredPartialPayment:
+
+    def _run(self, channel, body, invoice_total, pay_mock):
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+                   return_value={"id": "42", "total_with_tax": str(invoice_total)}), \
+             patch("src.services.rabbitmq_receiver.pay_invoice", pay_mock), \
+             patch("src.services.rabbitmq_receiver.send_message"):
+            process_message(channel, _make_method(), MagicMock(), body)
+
+    def test_full_payment_marks_invoice_paid(self):
+        """Amount == total → pay_invoice called, confirmation status='paid'."""
+        channel = MagicMock()
+        pay_mock = MagicMock(return_value=True)
+        self._run(channel, _build_payment_registered_xml(amount="400.00"), 400.0, pay_mock)
+
+        pay_mock.assert_called_once()
+        channel.basic_ack.assert_called_once_with(delivery_tag=1)
+
+    def test_overpayment_still_marks_invoice_paid(self):
+        """Amount > total → pay_invoice called (overpayment accepted)."""
+        channel = MagicMock()
+        pay_mock = MagicMock(return_value=True)
+        self._run(channel, _build_payment_registered_xml(amount="500.00"), 400.0, pay_mock)
+
+        pay_mock.assert_called_once()
+        channel.basic_ack.assert_called_once_with(delivery_tag=1)
+
+    def test_partial_payment_skips_pay_invoice(self):
+        """Amount < total → pay_invoice NOT called, status stays unpaid."""
+        channel = MagicMock()
+        pay_mock = MagicMock(return_value=True)
+        self._run(channel, _build_payment_registered_xml(amount="300.00"), 400.0, pay_mock)
+
+        pay_mock.assert_not_called()
+        channel.basic_ack.assert_called_once_with(delivery_tag=1)
+
+    def test_partial_payment_sends_unpaid_status_to_crm(self):
+        """Partial payment → confirmation XML sent to CRM has status='unpaid'."""
+        channel = MagicMock()
+        pay_mock = MagicMock(return_value=True)
+        sent_xmls = []
+
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+                   return_value={"id": "42", "total_with_tax": "400.00"}), \
+             patch("src.services.rabbitmq_receiver.pay_invoice", pay_mock), \
+             patch("src.services.rabbitmq_receiver.send_message",
+                   side_effect=lambda xml, **kw: sent_xmls.append(xml)):
+            process_message(channel, _make_method(), MagicMock(), _build_payment_registered_xml(amount="300.00"))
+
+        crm_xmls = [x for x in sent_xmls if ET.fromstring(x).findtext("header/type") == "payment_registered"]
+        assert crm_xmls, "No payment_registered confirmation sent"
+        status = ET.fromstring(crm_xmls[0]).findtext("body/invoice/status")
+        assert status == "pending"
+
+    def test_full_payment_sends_paid_status_to_crm(self):
+        """Full payment → confirmation XML sent to CRM has status='paid'."""
+        channel = MagicMock()
+        sent_xmls = []
+
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+                   return_value={"id": "42", "total_with_tax": "400.00"}), \
+             patch("src.services.rabbitmq_receiver.pay_invoice", return_value=True), \
+             patch("src.services.rabbitmq_receiver.send_message",
+                   side_effect=lambda xml, **kw: sent_xmls.append(xml)):
+            process_message(channel, _make_method(), MagicMock(), _build_payment_registered_xml(amount="400.00"))
+
+        crm_xmls = [x for x in sent_xmls if ET.fromstring(x).findtext("header/type") == "payment_registered"]
+        assert crm_xmls, "No payment_registered confirmation sent"
+        status = ET.fromstring(crm_xmls[0]).findtext("body/invoice/status")
+        assert status == "paid"
+
+    def test_invoice_not_found_sends_to_dlq(self):
+        """Invoice not found in FossBilling → DLQ and nack."""
+        channel = MagicMock()
+        with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
+             patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
+             patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+                   return_value=None), \
+             patch("src.services.rabbitmq_receiver.send_message"):
+            process_message(channel, _make_method(), MagicMock(), _build_payment_registered_xml())
+
+        channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
+        channel.basic_ack.assert_not_called()

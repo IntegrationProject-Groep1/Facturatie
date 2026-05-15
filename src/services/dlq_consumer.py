@@ -1,4 +1,5 @@
 import logging
+import sys
 import os
 import defusedxml.ElementTree as ET
 
@@ -8,6 +9,7 @@ import pika.spec
 from dotenv import load_dotenv
 
 from src.services.rabbitmq_utils import get_connection
+from src.services.rabbitmq_sender import send_log
 
 load_dotenv()
 
@@ -79,7 +81,14 @@ def process_dlq_message(
     )
 
     logger.error(alert_line)
-    print(alert_line)
+
+    # PROTOCOL: System Failures (The "Emergency" Log)
+    send_log(
+        level="error",
+        action="system_error",
+        message=f"Internal Error in [DLQ_Consumer]: Message hit DLQ. Details: {alert_line}",
+        channel=channel
+    )
 
     channel.basic_ack(delivery_tag=method.delivery_tag)
     logger.info("[DLQ] Message acknowledged (ack)")
@@ -89,12 +98,12 @@ def process_dlq_message(
 
 def start_dlq_consumer(queue: str | None = None) -> None:
     if queue is None:
-        queue = os.getenv("QUEUE_DLQ", "facturatie.dlq")
+        queue = os.getenv("QUEUE_DLQ", "errors.facturatie")
 
     connection = get_connection()
     channel = connection.channel()
 
-    channel.queue_declare(queue=queue, passive=True)
+    channel.queue_declare(queue=queue, passive=False, durable=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=process_dlq_message)
 
@@ -109,4 +118,5 @@ def start_dlq_consumer(queue: str | None = None) -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(sys.stdout)])
     start_dlq_consumer()

@@ -20,6 +20,7 @@ node_modules/
 .vscode/
 .idea/
 .claude
+CLAUDE.md
 
 # OS specifieke bestanden
 Thumbs.db
@@ -27,6 +28,7 @@ Thumbs.db
 
 # Log bestanden
 *.log
+logs/
 
 # Python packaging
 *.egg-info/

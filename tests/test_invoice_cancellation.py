@@ -1,6 +1,6 @@
 """
-Tests voor de invoice_cancelled message flow.
-Consolideert: test_invoice_cancellation.py + test_block_paid_invoice_cancellation.py
+Tests for the invoice_cancelled message flow.
+Consolidates: test_invoice_cancellation.py + test_block_paid_invoice_cancellation.py
 """
 import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock, patch
@@ -96,8 +96,7 @@ def test_get_invoice_status_raises_on_connection_error():
 
 def test_cancellation_failed_xml_contains_reason():
     xml_str = build_cancellation_failed_xml(
-        invoice_id="INV-001", customer_id="12345",
-        reason="invoice_already_paid",
+        invoice_id="INV-001", customer_id="12345", reason="invoice_already_paid",
     )
     root = ET.fromstring(xml_str.split("\n", 1)[1])
     assert root.findtext("body/reason") == "invoice_already_paid"
@@ -121,16 +120,16 @@ def test_cancellation_failed_xml_has_invoice_id_in_body():
     assert root.findtext("body/invoice_id") == "INV-001"
 
 
-def test_cancellation_failed_xml_has_customer_id_in_body():
+def test_cancellation_failed_xml_has_user_id_in_body():
     xml_str = build_cancellation_failed_xml(
         invoice_id="INV-001", customer_id="12345",
         reason="invoice_already_paid",
     )
     root = ET.fromstring(xml_str.split("\n", 1)[1])
-    assert root.findtext("body/customer_id") == "12345"
+    assert root.findtext("body/user_id") == "12345"
 
 
-# ── process_message integratie ────────────────────────────────────────────────
+# ── process_message integration ───────────────────────────────────────────────
 
 def test_fossbilling_failure_sends_to_dlq():
     channel = MagicMock()
@@ -138,8 +137,8 @@ def test_fossbilling_failure_sends_to_dlq():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
-               return_value="unpaid"), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+               return_value={"status": "unpaid", "lines": [{"title": "Inschrijvingskosten"}]}), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice",
                return_value=False):
         process_message(channel, _make_method(), MagicMock(), body)
@@ -155,8 +154,8 @@ def test_successful_flow_acks_and_notifies_crm():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
-               return_value="unpaid"), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+               return_value={"status": "unpaid", "lines": [{"title": "Inschrijvingskosten"}]}), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice",
                return_value=True), \
          patch("src.services.rabbitmq_receiver.publish_invoice_cancelled") as mock_crm:
@@ -232,8 +231,8 @@ def test_pending_invoice_proceeds_with_cancellation():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
-               return_value="unpaid"), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
+               return_value={"status": "unpaid", "lines": [{"title": "Inschrijvingskosten"}]}), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice",
                return_value=True), \
          patch("src.services.rabbitmq_receiver.publish_invoice_cancelled"):
@@ -248,7 +247,7 @@ def test_invoice_not_found_sends_error_to_crm():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
                return_value=None), \
          patch("src.services.rabbitmq_receiver.publish_cancellation_failed") as mock_failed:
         process_message(channel, _make_method(), MagicMock(), body)
@@ -263,7 +262,7 @@ def test_fossbilling_unreachable_sends_to_dlq():
 
     with patch("src.services.rabbitmq_receiver.is_duplicate", return_value=False), \
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
+         patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice",
                side_effect=Exception("Connection refused")):
         process_message(channel, _make_method(), MagicMock(), body)
 
@@ -272,7 +271,7 @@ def test_fossbilling_unreachable_sends_to_dlq():
 
 
 def test_empty_invoice_id_sends_to_dlq():
-    """Leeg invoice_id moet naar DLQ — niets om op te zoeken."""
+    """Empty invoice_id must go to DLQ — nothing to look up."""
     channel = MagicMock()
     body = _build_xml_bytes(invoice_id="")
 

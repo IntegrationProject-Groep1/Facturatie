@@ -1,33 +1,32 @@
 """
-Testscript voor de invoice_cancelled flow.
+Test the 3 scenarios for invoice_cancelled:
 
-Stuurt een invoice_cancelled bericht naar de receiver die dan:
-  1. De status van de factuur controleert in FossBilling
-  2a. Als de factuur annuleerbaar is: zet hem op 'cancelled' en stuurt bevestiging naar facturatie.to.crm
-  2b. Als de factuur al betaald/geannuleerd is: stuurt een failed notificatie naar facturatie.to.crm
-  2c. Als de factuur niet bestaat: stuurt een failed notificatie naar facturatie.to.crm
+  Scenario 1: Paid registration invoice  → credit note created in FossBilling
+  Scenario 2: Paid consumption invoice   → blocked (consumption_invoice_cannot_be_cancelled)
+  Scenario 3: Unpaid invoice             → invoice cancelled in FossBilling
 
-Pas INVOICE_ID en CUSTOMER_ID aan voor je test.
+Adjust the INVOICE IDs to existing invoices in FossBilling before testing.
 
 Run:
     python -m scripts.send_test_invoice_cancelled
 """
 
-import sys
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from src.services.rabbitmq_sender import send_message
 
 QUEUE = "facturatie.incoming"
 
-# ── Pas dit aan ───────────────────────────────────────────────────────────────
-INVOICE_ID  = "10"      # ID van een bestaande factuur in FossBilling
-CUSTOMER_ID = "12345"   # Klant-ID
-REASON      = "Customer requested cancellation"  # Optioneel
+# Scenario 1: a PAID invoice with item "Inschrijvingskosten" (registration)
+PAID_REGISTRATION_INVOICE_ID = "185"
+
+# Scenario 2: a PAID consumption invoice (e.g. Duvel/Bitterballen items)
+PAID_CONSUMPTION_INVOICE_ID = "181"
+
+# Scenario 3: an UNPAID registration invoice
+UNPAID_INVOICE_ID = "184"
+
+IDENTITY_UUID = str(uuid.uuid4())
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -35,19 +34,13 @@ def ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def build_invoice_cancelled(
-    invoice_id: str,
-    customer_id: str,
-    reason: str = "",
-) -> str:
-    msg_id = str(uuid.uuid4())
+def build_invoice_cancelled(invoice_id: str, reason: str = "") -> str:
     reason_xml = f"\n    <reason>{reason}</reason>" if reason else ""
-
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<message>\n"
         "  <header>\n"
-        f"    <message_id>{msg_id}</message_id>\n"
+        f"    <message_id>{uuid.uuid4()}</message_id>\n"
         f"    <timestamp>{ts()}</timestamp>\n"
         "    <source>crm</source>\n"
         "    <type>invoice_cancelled</type>\n"
@@ -55,39 +48,54 @@ def build_invoice_cancelled(
         "  </header>\n"
         "  <body>\n"
         f"    <invoice_id>{invoice_id}</invoice_id>\n"
-        f"    <user_id>{customer_id}</user_id>"
+        f"    <identity_uuid>{IDENTITY_UUID}</identity_uuid>"
         f"{reason_xml}\n"
         "  </body>\n"
         "</message>"
     )
 
 
+def run_scenario(number: int, description: str, invoice_id: str, reason: str = ""):
+    print(f"\n{'='*60}")
+    print(f"Scenario {number}: {description}")
+    print(f"Invoice ID: {invoice_id}")
+    print("="*60)
+    xml = build_invoice_cancelled(invoice_id, reason)
+    send_message(xml, routing_key=QUEUE)
+    print(f"[OK] Sent to {QUEUE}")
+
+
 if __name__ == "__main__":
-    xml = build_invoice_cancelled(
-        invoice_id=INVOICE_ID,
-        customer_id=CUSTOMER_ID,
-        reason=REASON,
+    print("Invoice Cancelled Test — 3 scenarios")
+
+    run_scenario(
+        1,
+        "Paid registration invoice → expected: credit note in FossBilling",
+        PAID_REGISTRATION_INVOICE_ID,
+        reason="Participant unregistered",
     )
 
-    print("=" * 60)
-    print("[TEST] Versturen invoice_cancelled")
-    print(f"[TEST] Invoice ID:   {INVOICE_ID}")
-    print(f"[TEST] Customer ID:  {CUSTOMER_ID}")
-    print(f"[TEST] Reden:        {REASON or '(geen)'}")
-    print(f"[TEST] Queue:        {QUEUE}")
-    print("=" * 60)
-    print(xml)
-    print("=" * 60)
+    input("\nPress Enter for scenario 2...")
 
-    send_message(xml, routing_key=QUEUE)
+    run_scenario(
+        2,
+        "Paid consumption invoice → expected: cancellation_failed (consumption_invoice_cannot_be_cancelled)",
+        PAID_CONSUMPTION_INVOICE_ID,
+        reason="Test consumption blocking",
+    )
 
-    print("\n[OK] Bericht verstuurd. Controleer:")
-    print(f"  - FossBilling: factuur {INVOICE_ID} moet status 'cancelled' hebben")
-    print("    (tenzij al betaald/geannuleerd — dan zie je een failed notificatie)")
-    print("  - RabbitMQ facturatie.to.crm: bevestigings- of failed bericht verwacht")
-    print("  - Receiver logs: geen errors")
-    print()
-    print("Scenario's om te testen:")
-    print("  1. Gebruik een factuur met status 'unpaid'  → wordt geannuleerd")
-    print("  2. Gebruik een factuur met status 'paid'    → blocked, failed notificatie")
-    print("  3. Gebruik een niet-bestaand invoice ID     → failed notificatie")
+    input("\nPress Enter for scenario 3...")
+
+    run_scenario(
+        3,
+        "Unpaid invoice → expected: invoice cancelled in FossBilling",
+        UNPAID_INVOICE_ID,
+        reason="Test cancellation",
+    )
+
+    print("\n" + "="*60)
+    print("Done. Check:")
+    print("  Scenario 1 → FossBilling: new credit note invoice visible")
+    print("  Scenario 2 → Receiver log: 'consumption_invoice_cannot_be_cancelled'")
+    print(f"  Scenario 3 → FossBilling: invoice {UNPAID_INVOICE_ID} status = cancelled")
+    print("="*60)
