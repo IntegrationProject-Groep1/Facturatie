@@ -35,7 +35,7 @@ def _build_xml_bytes(
     body = ET.SubElement(root, "body")
     if invoice_id:
         ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "user_id").text = customer_id
+    ET.SubElement(body, "identity_uuid").text = customer_id
     if reason:
         ET.SubElement(body, "reason").text = reason
 
@@ -146,7 +146,7 @@ def test_fossbilling_failure_sends_to_dlq():
 
     channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
     channel.basic_publish.assert_called_once()
-    assert "dlq" in str(channel.basic_publish.call_args).lower()
+    assert "errors.facturatie" in str(channel.basic_publish.call_args).lower()
 
 
 def test_successful_flow_acks_and_notifies_crm():
@@ -170,6 +170,7 @@ def test_successful_flow_acks_and_notifies_crm():
 
 
 def test_paid_invoice_blocks_cancellation():
+    """Paid invoice → geen cancel_invoice call, wel create_credit_note."""
     channel = MagicMock()
     body = _build_xml_bytes()
 
@@ -177,14 +178,19 @@ def test_paid_invoice_blocks_cancellation():
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
                return_value="paid"), \
-         patch("src.services.rabbitmq_receiver.publish_cancellation_failed"), \
-         patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice") as mock_cancel:
+         patch("src.services.fossbilling_api.get_invoice_type", return_value="consumption", create=True), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.create_credit_note",
+               return_value=True) as mock_credit, \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.cancel_invoice") as mock_cancel, \
+         patch("src.services.rabbitmq_receiver.publish_invoice_cancelled"):
         process_message(channel, _make_method(), MagicMock(), body)
 
     mock_cancel.assert_not_called()
+    mock_credit.assert_called_once()
 
 
 def test_paid_invoice_sends_failed_notification_to_crm():
+    """Paid invoice → creditnota aangemaakt → publish_invoice_cancelled gestuurd."""
     channel = MagicMock()
     body = _build_xml_bytes()
 
@@ -192,15 +198,17 @@ def test_paid_invoice_sends_failed_notification_to_crm():
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
                return_value="paid"), \
-         patch("src.services.rabbitmq_receiver.publish_cancellation_failed") as mock_failed:
+         patch("src.services.fossbilling_api.get_invoice_type", return_value="consumption", create=True), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.create_credit_note",
+               return_value=True), \
+         patch("src.services.rabbitmq_receiver.publish_invoice_cancelled") as mock_cancelled:
         process_message(channel, _make_method(), MagicMock(), body)
 
-    mock_failed.assert_called_once()
-    assert "invoice_already_paid" in str(mock_failed.call_args)
+    mock_cancelled.assert_called_once()
 
 
 def test_paid_invoice_is_acked_not_sent_to_dlq():
-    """Geblokkeerde annulering is een geldig bericht — moet geacked worden, niet naar DLQ."""
+    """Paid invoice met creditnota → geacked, niet naar DLQ."""
     channel = MagicMock()
     body = _build_xml_bytes()
 
@@ -208,7 +216,10 @@ def test_paid_invoice_is_acked_not_sent_to_dlq():
          patch("src.services.rabbitmq_receiver.validate_xml", return_value=(True, None)), \
          patch("src.services.rabbitmq_receiver.fossbilling_client.get_invoice_status",
                return_value="paid"), \
-         patch("src.services.rabbitmq_receiver.publish_cancellation_failed"):
+         patch("src.services.fossbilling_api.get_invoice_type", return_value="consumption", create=True), \
+         patch("src.services.rabbitmq_receiver.fossbilling_client.create_credit_note",
+               return_value=True), \
+         patch("src.services.rabbitmq_receiver.publish_invoice_cancelled"):
         process_message(channel, _make_method(), MagicMock(), body)
 
     channel.basic_ack.assert_called_once_with(delivery_tag=1)

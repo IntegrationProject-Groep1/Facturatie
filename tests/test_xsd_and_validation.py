@@ -26,24 +26,26 @@ def build_invoice_request_xml(
 
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = msg_id
-    # Volgorde conform XSD: message_id → type → source → timestamp → version → correlation_id
-    # master_uuid VERWIJDERD — verboden in alle headers (contract #90)
-    ET.SubElement(header, "type").text = "invoice_request"
-    ET.SubElement(header, "source").text = source
     ET.SubElement(header, "timestamp").text = timestamp
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = "invoice_request"
     ET.SubElement(header, "version").text = version
     if correlation_id:
         ET.SubElement(header, "correlation_id").text = correlation_id
     else:
-        ET.SubElement(header, "correlation_id").text = "corr-default-001"  # verplicht veld
+        ET.SubElement(header, "correlation_id").text = "c3d4e5f6-a7b8-9012-cdef-012345678902"  # verplicht veld
 
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "user_id").text = "BADGE-007"
+    ET.SubElement(body, "identity_uuid").text = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"
+    ET.SubElement(body, "payment_status").text = "pending"
+    ET.SubElement(body, "payment_method").text = "on_site"
 
     invoice_data = ET.SubElement(body, "invoice_data")
     # Volgorde conform InvoiceDataType XSD: first_name → last_name → email → address → company_name → vat_number
-    ET.SubElement(invoice_data, "first_name").text = "Jan"
-    ET.SubElement(invoice_data, "last_name").text = "De Tester"
+    contact = ET.SubElement(invoice_data, "contact")
+    ET.SubElement(contact, "first_name").text = "Jan"
+    ET.SubElement(contact, "last_name").text = "De Tester"
+
     ET.SubElement(invoice_data, "email").text = "test@example.com"
 
     address = ET.SubElement(invoice_data, "address")
@@ -75,10 +77,11 @@ def build_new_registration_xml(
     ET.SubElement(header, "source").text = source
     ET.SubElement(header, "type").text = "new_registration"
     ET.SubElement(header, "version").text = version
+    ET.SubElement(header, "correlation_id").text = "c3d4e5f6-a7b8-9012-cdef-012345678902"
 
     body = ET.SubElement(root, "body")
     customer = ET.SubElement(body, "customer")
-    ET.SubElement(customer, "user_id").text = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"
+    ET.SubElement(customer, "identity_uuid").text = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"
 
     if email is not None:
         ET.SubElement(customer, "email").text = email
@@ -93,7 +96,6 @@ def build_new_registration_xml(
     ET.SubElement(customer, "company_name").text = "Test Bedrijf NV"
     ET.SubElement(customer, "vat_number").text = "BE0123456789"
     ET.SubElement(customer, "company_id").text = "comp-001"
-    ET.SubElement(customer, "session_id").text = "sess-001"
 
     payment_due = ET.SubElement(customer, "payment_due")
     amount_el = ET.SubElement(payment_due, "amount", {"currency": "eur"})
@@ -138,8 +140,8 @@ def test_invalid_vat_rate_returns_error() -> None:
     root = ET.fromstring(build_invoice_request_xml())
     # Verwijder verplicht veld om een validatiefout te forceren
     body = root.find("body")
-    user_id = body.find("user_id")
-    body.remove(user_id)
+    identity_uuid = body.find("identity_uuid")
+    body.remove(identity_uuid)
     xml = ET.tostring(root, encoding="unicode")
     is_valid, errors = validate_xml(xml, "invoice_request")
     assert is_valid is False

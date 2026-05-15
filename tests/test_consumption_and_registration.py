@@ -46,9 +46,9 @@ def mock_identity():
 
 def _build_invoice_request_xml(
     msg_id: str = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5",
-    user_id: str = "BADGE-007",
+    user_id: str = "e8b27c1d-4f2a-4b3e-9c5f-123456789abc",
     company_name: str = "Bedrijf NV",
-    correlation_id: str = "corr-001",
+    correlation_id: str = "c3d4e5f6-a7b8-9012-cdef-012345678902",
 ) -> bytes:
     """
     Bouwt een invoice_request XML conform de nieuwe structuur (contract §11.1).
@@ -68,7 +68,7 @@ def _build_invoice_request_xml(
     ET.SubElement(header, "correlation_id").text = correlation_id
 
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "user_id").text = user_id
+    ET.SubElement(body, "identity_uuid").text = user_id
 
     invoice_data = ET.SubElement(body, "invoice_data")
     # Volgorde conform InvoiceDataType XSD: first_name → last_name → email → address → company_name → vat_number
@@ -319,7 +319,8 @@ class TestProcessMessageInvoiceRequest:
                    return_value="INV-001"), \
              patch("src.services.rabbitmq_receiver.build_invoice_created_notification_xml",
                    return_value="<xml>mock</xml>"), \
-             patch("src.services.rabbitmq_receiver.send_message"):
+             patch("src.services.rabbitmq_receiver.send_message"), \
+             patch.object(receiver.consumption_store, "save_invoice_correlation", create=True):
             process_message(channel, _make_method(), MagicMock(), body)
 
         channel.basic_ack.assert_called_once_with(delivery_tag=1)
