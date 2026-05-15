@@ -113,6 +113,10 @@ async def list_clients(
     """
     List FossBilling clients (registered payers).
     Optionally search by email, name, or company name.
+
+    FossBilling billing accounts (a SUBSET of people: only those who have been
+    invoiced). NOT website login accounts (use Frontend) and NOT full member
+    profiles (use CRM). A FossBilling client_id is NOT the same as a CRM Master_UUID.
     """
     payload: dict = {"per_page": min(limit, 200), "page": page}
     if search:
@@ -131,7 +135,11 @@ async def list_clients(
 
 @mcp.tool()
 async def get_client(client_id: int) -> dict[str, Any]:
-    """Get full details for a single FossBilling client by their numeric ID."""
+    """
+    Get full details for a single FossBilling client by their numeric ID.
+
+    FossBilling billing account, NOT the same as a CRM member or Drupal user.
+    """
     try:
         return await _fb("admin/client/get", {"id": client_id})
     except Exception as exc:
@@ -140,7 +148,12 @@ async def get_client(client_id: int) -> dict[str, Any]:
 
 @mcp.tool()
 async def search_clients(query: str) -> dict[str, Any]:
-    """Search FossBilling clients by email, name, or company name."""
+    """
+    Search FossBilling clients by email, name, or company name.
+
+    Billing accounts only. For full member-profile search use `crm__search_members`;
+    for Drupal users use `frontend__search_users`.
+    """
     try:
         result = await _fb("admin/client/get_list", {"search": query, "per_page": 100})
         return {"clients": result.get("list", []), "total": result.get("total", 0), "query": query}
@@ -150,7 +163,13 @@ async def search_clients(query: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_client_by_email(email: str) -> dict[str, Any]:
-    """Look up a FossBilling client by their exact email address."""
+    """
+    Look up a FossBilling client by their exact email address.
+
+    Billing account only. For full member profile use `crm__get_member_by_email`;
+    for Drupal website account use `frontend__get_user_by_email`. The same email
+    may exist in all three systems with different IDs.
+    """
     try:
         result = await _fb("admin/client/get_list", {"search": email, "per_page": 10})
         clients = result.get("list", [])
@@ -221,6 +240,9 @@ async def list_invoices(
     """
     List invoices from FossBilling.
     status: 'unpaid' | 'paid' | 'cancelled' | 'refunded' | None (all)
+
+    Use status='unpaid' for outstanding receivables, status='paid' for paid
+    invoices, etc. Authoritative FossBilling data.
     """
     payload: dict = {"per_page": min(limit, 200), "page": page}
     if status:
@@ -243,33 +265,6 @@ async def get_invoice(invoice_id: int) -> dict[str, Any]:
         return await _fb("admin/invoice/get", {"id": invoice_id})
     except Exception as exc:
         return _err(exc, invoice_id=invoice_id)
-
-
-@mcp.tool()
-async def get_invoices_by_status(status: str, limit: int = 100) -> dict[str, Any]:
-    """
-    Get all invoices with a specific status.
-    status: 'unpaid' | 'paid' | 'cancelled' | 'refunded'
-    """
-    return await list_invoices(status=status, limit=limit)
-
-
-@mcp.tool()
-async def get_unpaid_invoices(limit: int = 100) -> dict[str, Any]:
-    """Get all unpaid invoices — the outstanding receivables."""
-    return await list_invoices(status="unpaid", limit=limit)
-
-
-@mcp.tool()
-async def get_paid_invoices(limit: int = 100) -> dict[str, Any]:
-    """Get all paid invoices."""
-    return await list_invoices(status="paid", limit=limit)
-
-
-@mcp.tool()
-async def get_cancelled_invoices(limit: int = 100) -> dict[str, Any]:
-    """Get all cancelled invoices."""
-    return await list_invoices(status="cancelled", limit=limit)
 
 
 @mcp.tool()
@@ -301,6 +296,10 @@ async def get_revenue_summary() -> dict[str, Any]:
     """
     Revenue summary across all invoices:
     total paid, total unpaid (outstanding), total cancelled, invoice counts per status.
+
+    AUTHORITATIVE for invoiced/accounting revenue. For real-time on-site POS
+    revenue use `kassa__get_sales_summary`; for log-derived revenue proxy
+    use `monitoring__get_payment_revenue` (NOT authoritative).
     """
     statuses = ["paid", "unpaid", "cancelled", "refunded"]
     summary: dict[str, Any] = {}
@@ -381,6 +380,10 @@ async def get_pending_consumptions(company_id: str | None = None) -> dict[str, A
     """
     Get all pending consumption items waiting to be invoiced after event end.
     Optionally filter by company_id. These are accumulated bar/catering orders per company.
+
+    Consumption items in the post-event invoicing staging area (MySQL).
+    For LIVE POS orders during the event use `kassa__get_recent_orders`;
+    for the CRM master record use `crm__list_consumptions`.
     """
     try:
         if company_id:
@@ -402,6 +405,9 @@ async def get_companies_with_pending() -> dict[str, Any]:
     """
     List all companies that currently have pending consumption items
     that haven't been invoiced yet.
+
+    Staging-area data from MySQL pending_consumptions. For live event sales
+    use Kassa; for member-linked consumption history use CRM Consumption__c.
     """
     try:
         rows = await _query("""
@@ -473,7 +479,12 @@ async def get_pending_summary_by_company() -> dict[str, Any]:
 
 @mcp.tool()
 async def get_pending_consumption_stats() -> dict[str, Any]:
-    """Overall pending consumption statistics: total items, total value, number of companies."""
+    """
+    Overall pending consumption statistics: total items, total value, number of companies.
+
+    Aggregated from MySQL pending_consumptions (staging for post-event invoicing).
+    Not the same as live POS revenue (Kassa) or member-linked consumption history (CRM).
+    """
     try:
         row = await _query("""
             SELECT
@@ -507,6 +518,8 @@ async def get_invoice_registry(limit: int = 50) -> dict[str, Any]:
     """
     List entries from the local invoice registry (invoice_id ↔ correlation_id mappings).
     This tracks which FossBilling invoice corresponds to each integration message.
+
+    The ONLY way to trace a specific RabbitMQ message through to its invoice.
     """
     try:
         rows = await _query(
@@ -521,7 +534,11 @@ async def get_invoice_registry(limit: int = 50) -> dict[str, Any]:
 
 @mcp.tool()
 async def lookup_invoice_by_correlation(correlation_id: str) -> dict[str, Any]:
-    """Look up the FossBilling invoice_id linked to a specific RabbitMQ correlation_id."""
+    """
+    Look up the FossBilling invoice_id linked to a specific RabbitMQ correlation_id.
+
+    The ONLY way to trace a specific message through to its invoice.
+    """
     try:
         rows = await _query(
             "SELECT * FROM invoice_registry WHERE correlation_id = %s LIMIT 1",
@@ -580,6 +597,9 @@ async def get_company_billing_accounts() -> dict[str, Any]:
     """
     List all companies that have a FossBilling billing account mapped.
     These are companies whose consumption orders are invoiced after event end.
+
+    Maps Kassa/CRM company_id → FossBilling client_id. The bridge between the
+    member-side (CRM) and billing-side (FossBilling) views of a company.
     """
     try:
         rows = await _query(
@@ -593,7 +613,11 @@ async def get_company_billing_accounts() -> dict[str, Any]:
 
 @mcp.tool()
 async def get_company_billing_account(company_id: str) -> dict[str, Any]:
-    """Look up the FossBilling client mapping for a specific company_id."""
+    """
+    Look up the FossBilling client mapping for a specific company_id.
+
+    Bridges Kassa/CRM company_id → FossBilling client_id.
+    """
     try:
         rows = await _query(
             "SELECT * FROM company_accounts WHERE company_id = %s LIMIT 1",
