@@ -45,9 +45,8 @@ services:
     depends_on:
       - mysql
   facturatie_mcp:
-    build:
-      context: ./integratie
-    image: facturatie-mcp:local
+    build: .
+    command: python integratie/mcp_server.py
     container_name: facturatie_mcp
     restart: unless-stopped
     ports:
@@ -64,8 +63,6 @@ services:
     depends_on:
       - fossbilling
       - mysql
-    networks:
-      - default
 
 volumes:
   fossbilling:
