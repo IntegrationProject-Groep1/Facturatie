@@ -132,7 +132,7 @@ def save_items(
         INSERT INTO pending_consumptions
             (consumption_order_id, company_id, company_name, email, badge_id, master_uuid,
              description, price, quantity, vat_rate, session_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,  %s)
     """
     data = [
         (consumption_order_id, company_id, company_name, email, badge_id, master_uuid,

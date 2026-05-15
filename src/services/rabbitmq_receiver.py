@@ -700,7 +700,7 @@ def process_message(
                 channel.basic_ack(delivery_tag=method.delivery_tag)
                 return
 
-        print(f"[RECEIVER][{msg_type}] Processing invoice={invoice_id}")
+        logging.info("[RECEIVER][%s] Processing invoice=%s", msg_type, invoice_id)
 
         try:
             invoice = fossbilling_client.get_invoice(invoice_id)

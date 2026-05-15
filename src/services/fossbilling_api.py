@@ -299,7 +299,7 @@ def get_invoice_status(invoice_id: str) -> str | None:
     return invoice.get("status") if invoice is not None else None
 
 
-def get_invoice_type(invoice_id: str) -> str:
+def fetch_invoice_type_by_id(invoice_id: str) -> str:
     """Bepaalt het type factuur: 'registration' of 'consumption' op basis van factuurlijnen."""
     try:
         response = _api_post("admin/invoice/get", {"id": invoice_id})
@@ -494,7 +494,7 @@ def cancel_invoice(invoice_id: str) -> bool:
         return False
 
 
-def create_credit_note(invoice_id: str) -> bool:
+def mark_invoice_as_refunded(invoice_id: str) -> bool:
     """Maakt een creditnota aan voor een betaalde factuur."""
     try:
         _api_post("admin/invoice/update", {"id": invoice_id, "status": "refunded"})
