@@ -129,8 +129,8 @@ async def get_client_invoices(
     limit: Annotated[int, Field(description="Max invoices to return (default 50, max 200).")] = 50,
 ) -> dict[str, Any]:
     """
-    Get all invoices for a specific FossBilling client.
-    Authoritative billing data — NOT from monitoring or CRM.
+    Get all invoices for a specific FossBilling client, optionally filtered by status.
+    Use after get_company_billing_account() to resolve the client_id. Authoritative billing data — NOT from monitoring or CRM.
     """
     payload: dict = {"client_id": client_id, "per_page": min(limit, 200)}
     if status:
@@ -244,7 +244,7 @@ async def get_invoice(
 async def get_recent_invoices(
     limit: Annotated[int, Field(description="Max invoices to return (default 20).")] = 20,
 ) -> dict[str, Any]:
-    """Get the most recently created invoices across all statuses."""
+    """Get the most recently created invoices across all clients and statuses. Useful for a quick overview of recent billing activity without knowing a specific client or company."""
     return await list_invoices(limit=limit, page=1)
 
 
@@ -317,7 +317,7 @@ async def get_invoice_line_items(
         description="FossBilling invoice numeric ID (from list_invoices or get_invoices_by_email). Never guess.",
     )],
 ) -> dict[str, Any]:
-    """Get the individual line items on a specific invoice. Returns: lines, status, total, client_id."""
+    """Get the individual line items (products, quantities, unit prices) on a specific invoice. Returns line details, invoice status, total, and client_id. Use to answer questions like 'what exactly was on invoice #42?'."""
     try:
         invoice = await _fb("admin/invoice/get", {"id": invoice_id})
         lines = invoice.get("lines", [])
@@ -377,8 +377,8 @@ async def get_registration_invoices(
     limit: Annotated[int, Field(description="Max invoices to return (default 100).")] = 100,
 ) -> dict[str, Any]:
     """
-    Get invoices that contain registration fees ('Inschrijvingskosten').
-    These come from new_registration messages. Optionally filter by status.
+    Get invoices generated from new_registration RabbitMQ messages — these contain 'Inschrijvingskosten' (registration fee) line items.
+    Optionally filter by payment status. Use when an admin asks about outstanding or paid registration fees.
     """
     try:
         payload: dict = {"per_page": min(limit, 200)}
@@ -400,22 +400,13 @@ async def get_registration_invoices(
 
 @mcp.tool()
 async def get_payment_gateways() -> dict[str, Any]:
-    """List all configured payment gateways in FossBilling."""
+    """List all configured payment gateways in FossBilling (e.g. Stripe, bank transfer). Use when an admin asks which payment methods are available or active."""
     try:
         result = await _fb("admin/invoice/gateway_get_list", {})
         return {"gateways": result.get("list", [])}
     except Exception as exc:
         return _err(exc, gateways=[])
 
-
-@mcp.tool()
-async def check_fossbilling_status() -> dict[str, Any]:
-    """Check if the FossBilling API is reachable and credentials are valid."""
-    try:
-        await _fb("admin/client/get_list", {"per_page": 1})
-        return {"status": "online", "api_url": _API_URL}
-    except Exception as exc:
-        return {"status": "offline", "error": str(exc), "api_url": _API_URL}
 
 
 # ─────────────────────────────────────────────
@@ -562,25 +553,6 @@ async def get_pending_consumption_stats() -> dict[str, Any]:
 # ─────────────────────────────────────────────
 
 @mcp.tool()
-async def get_invoice_registry(
-    limit: Annotated[int, Field(description="Max registry entries to return (default 50, max 500).")] = 50,
-) -> dict[str, Any]:
-    """
-    List entries from the local invoice registry (invoice_id ↔ correlation_id mappings).
-    The ONLY way to trace a RabbitMQ message through to its FossBilling invoice.
-    """
-    try:
-        rows = await _query(
-            "SELECT * FROM invoice_registry ORDER BY created_at DESC LIMIT %s",
-            (min(limit, 500),),
-        )
-        clean = [_clean_row(r) for r in rows]
-        return {"registry": clean, "count": len(clean)}
-    except Exception as exc:
-        return _err(exc, registry=[])
-
-
-@mcp.tool()
 async def lookup_invoice_by_correlation(
     correlation_id: Annotated[str, Field(
         description=(
@@ -604,45 +576,6 @@ async def lookup_invoice_by_correlation(
     except Exception as exc:
         return _err(exc, correlation_id=correlation_id)
 
-
-@mcp.tool()
-async def get_registry_by_type(
-    invoice_type: Annotated[str, Field(
-        description="Invoice type: 'registration' (new member fees) or 'consumption' (bar/catering orders).",
-    )],
-) -> dict[str, Any]:
-    """
-    Get registry entries filtered by invoice type.
-    """
-    try:
-        rows = await _query(
-            "SELECT * FROM invoice_registry WHERE invoice_type = %s ORDER BY created_at DESC",
-            (invoice_type,),
-        )
-        clean = [_clean_row(r) for r in rows]
-        return {"registry": clean, "count": len(clean), "invoice_type": invoice_type}
-    except Exception as exc:
-        return _err(exc, registry=[])
-
-
-@mcp.tool()
-async def get_registry_stats() -> dict[str, Any]:
-    """Registry statistics: total invoices tracked, split by type, oldest and newest."""
-    try:
-        rows = await _query("""
-            SELECT
-                invoice_type,
-                COUNT(*)     AS count,
-                MIN(created_at) AS first_at,
-                MAX(created_at) AS last_at
-            FROM invoice_registry
-            GROUP BY invoice_type
-        """)
-        clean = [_clean_row(r) for r in rows]
-        total = await _scalar("SELECT COUNT(*) FROM invoice_registry")
-        return {"by_type": clean, "total": total or 0}
-    except Exception as exc:
-        return _err(exc)
 
 
 # ─────────────────────────────────────────────
@@ -771,6 +704,31 @@ def _clean_row(row: dict) -> dict:
         else:
             out[k] = v
     return out
+
+
+# ─────────────────────────────────────────────
+#  WRITE OPERATIONS
+# ─────────────────────────────────────────────
+
+@mcp.tool()
+async def mark_invoice_paid(
+    invoice_id: Annotated[int, Field(description="FossBilling invoice ID. Get it from get_invoices_by_email or list_invoices — never guess.")],
+) -> dict[str, Any]:
+    """
+    Mark a FossBilling invoice as paid. WRITE OPERATION — confirm with admin before calling.
+
+    Use get_invoices_by_email or list_invoices to find the invoice_id first.
+    """
+    try:
+        result = await _fb("admin/invoice/mark_as_paid", {"id": invoice_id})
+        return {
+            "success": True,
+            "invoice_id": invoice_id,
+            "message": f"Invoice {invoice_id} marked as paid.",
+            "result": result,
+        }
+    except Exception as exc:
+        return _err(exc, invoice_id=invoice_id)
 
 
 if __name__ == "__main__":
