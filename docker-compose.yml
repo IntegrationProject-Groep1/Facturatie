@@ -44,6 +44,26 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
     depends_on:
       - mysql
+  facturatie_mcp:
+    build: .
+    command: python -m src.services.mcp_server
+    container_name: facturatie_mcp
+    restart: unless-stopped
+    ports:
+      - "${MCP_FACTURATIE_PORT:-8007}:8007"
+    environment:
+      BILLING_API_URL:      ${BILLING_API_URL:-http://fossbilling/api}
+      BILLING_API_USERNAME: ${BILLING_API_USERNAME:-admin}
+      BILLING_API_TOKEN:    ${BILLING_API_TOKEN:-}
+      DB_HOST:              mysql
+      MYSQL_DATABASE:       ${MYSQL_DATABASE:-fossbilling}
+      MYSQL_USER:           ${MYSQL_USER:-}
+      MYSQL_PASSWORD:       ${MYSQL_PASSWORD:-}
+      PORT:                 "8007"
+    depends_on:
+      - fossbilling
+      - mysql
+
 volumes:
   fossbilling:
   mysql:

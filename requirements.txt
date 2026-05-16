@@ -1,3 +1,6 @@
+fastmcp
+httpx
+aiomysql
 blinker==1.9.0
 certifi==2024.12.14
 charset-normalizer==3.4.6
