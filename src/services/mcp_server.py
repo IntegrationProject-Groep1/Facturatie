@@ -21,11 +21,12 @@ Environment variables:
     PORT                    HTTP port (default: 8007)
 """
 import os
-from typing import Any
+from typing import Annotated, Any
 
 import aiomysql
 import httpx
 from fastmcp import FastMCP
+from pydantic import Field
 
 mcp = FastMCP("facturatie")
 
@@ -116,13 +117,13 @@ async def _get_client_by_email(email: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_client_invoices(
-    client_id: int,
-    status: str | None = None,
-    limit: int = 50,
+    client_id: Annotated[int, Field(description="FossBilling numeric client ID. Get it from get_company_billing_account(company_id) or from a previous invoice result. Do not guess.")],
+    status: Annotated[str | None, Field(description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all statuses.")] = None,
+    limit: Annotated[int, Field(description="Max invoices to return (default 50, max 200).")] = 50,
 ) -> dict[str, Any]:
     """
     Get all invoices for a specific FossBilling client.
-    Optionally filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'.
+    Authoritative billing data — NOT from monitoring or CRM.
     """
     payload: dict = {"client_id": client_id, "per_page": min(limit, 200)}
     if status:
@@ -140,15 +141,14 @@ async def get_client_invoices(
 
 @mcp.tool()
 async def get_invoices_by_email(
-    email: str,
-    status: str | None = None,
-    limit: int = 50,
+    email: Annotated[str, Field(description="The person's email address (must include @). Resolves FossBilling client internally.")],
+    status: Annotated[str | None, Field(description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all.")] = None,
+    limit: Annotated[int, Field(description="Max invoices to return (default 50).")] = 50,
 ) -> dict[str, Any]:
     """
     Get invoices for a person by their email address.
-    status: 'unpaid' | 'paid' | 'cancelled' | 'refunded' | None (all).
-    Resolves the FossBilling client internally — no separate client lookup needed.
     Primary tool for 'what invoices does X have?' or 'does X have outstanding bills?'
+    Resolves the FossBilling client internally — no separate client lookup needed.
     """
     try:
         client = await _get_client_by_email(email)
@@ -159,8 +159,10 @@ async def get_invoices_by_email(
 
 
 @mcp.tool()
-async def get_client_balance(client_id: int) -> dict[str, Any]:
-    """Get the outstanding (unpaid) invoice total for a client."""
+async def get_client_balance(
+    client_id: Annotated[int, Field(description="FossBilling numeric client ID. Get it from get_company_billing_account(company_id) — never guess.")],
+) -> dict[str, Any]:
+    """Get the outstanding (unpaid) invoice total for a client. Returns unpaid count and total EUR amount."""
     try:
         result = await _fb("admin/invoice/get_list", {
             "client_id": client_id,
@@ -184,16 +186,14 @@ async def get_client_balance(client_id: int) -> dict[str, Any]:
 
 @mcp.tool()
 async def list_invoices(
-    status: str | None = None,
-    limit: int = 50,
-    page: int = 1,
+    status: Annotated[str | None, Field(description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all. Use 'unpaid' for outstanding receivables.")] = None,
+    limit: Annotated[int, Field(description="Max invoices per page (default 50, max 200).")] = 50,
+    page: Annotated[int, Field(description="Page number for pagination (default 1).")] = 1,
 ) -> dict[str, Any]:
     """
     List invoices from FossBilling.
-    status: 'unpaid' | 'paid' | 'cancelled' | 'refunded' | None (all)
-
-    Use status='unpaid' for outstanding receivables, status='paid' for paid
-    invoices, etc. Authoritative FossBilling data.
+    Authoritative source for billing data — NOT monitoring.
+    For a specific person's invoices use get_invoices_by_email instead.
     """
     payload: dict = {"per_page": min(limit, 200), "page": page}
     if status:
@@ -210,8 +210,10 @@ async def list_invoices(
 
 
 @mcp.tool()
-async def get_invoice(invoice_id: int) -> dict[str, Any]:
-    """Get the full invoice object from FossBilling, including line items."""
+async def get_invoice(
+    invoice_id: Annotated[int, Field(description="FossBilling invoice numeric ID (from list_invoices or get_invoices_by_email). Never guess.")],
+) -> dict[str, Any]:
+    """Get the full invoice object from FossBilling, including line items, client, and status."""
     try:
         return await _fb("admin/invoice/get", {"id": invoice_id})
     except Exception as exc:
@@ -219,21 +221,22 @@ async def get_invoice(invoice_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_recent_invoices(limit: int = 20) -> dict[str, Any]:
-    """Get the most recently created invoices (all statuses)."""
+async def get_recent_invoices(
+    limit: Annotated[int, Field(description="Max invoices to return (default 20).")] = 20,
+) -> dict[str, Any]:
+    """Get the most recently created invoices across all statuses."""
     return await list_invoices(limit=limit, page=1)
 
 
 @mcp.tool()
 async def get_invoices_by_date_range(
-    start_date: str,
-    end_date: str,
-    status: str | None = None,
-    limit: int = 100,
+    start_date: Annotated[str, Field(description="Start date in format 'YYYY-MM-DD', e.g. '2026-05-01'.")],
+    end_date: Annotated[str, Field(description="End date in format 'YYYY-MM-DD', e.g. '2026-05-31'.")],
+    status: Annotated[str | None, Field(description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all.")] = None,
+    limit: Annotated[int, Field(description="Max invoices to return (default 100).")] = 100,
 ) -> dict[str, Any]:
     """
-    Get invoices created between start_date and end_date (format: 'YYYY-MM-DD').
-    Optionally filter by status: 'unpaid' | 'paid' | 'cancelled' | 'refunded'.
+    Get invoices created between start_date and end_date.
     Useful for 'invoices from last month' or 'invoices from the event weekend'.
     """
     payload: dict = {"per_page": min(limit, 200), "date_from": start_date, "date_to": end_date}
@@ -254,11 +257,13 @@ async def get_invoices_by_date_range(
 
 
 @mcp.tool()
-async def get_overdue_invoices(limit: int = 50) -> dict[str, Any]:
+async def get_overdue_invoices(
+    limit: Annotated[int, Field(description="Max overdue invoices to return (default 50).")] = 50,
+) -> dict[str, Any]:
     """
-    Get unpaid invoices whose due date has already passed.
-    Sorted oldest-first so the most overdue appear first.
-    Use this for collections, chasing payments, or overdue reporting.
+    Get unpaid invoices whose due date has already passed, oldest-first.
+    Use for collections, chasing payments, or overdue reporting.
+    Returns: invoice list, count, total_overdue_eur.
     """
     from datetime import date
     today = date.today().isoformat()
@@ -285,8 +290,10 @@ async def get_overdue_invoices(limit: int = 50) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_invoice_line_items(invoice_id: int) -> dict[str, Any]:
-    """Get the individual line items (products/services) on a specific invoice."""
+async def get_invoice_line_items(
+    invoice_id: Annotated[int, Field(description="FossBilling invoice numeric ID (from list_invoices or get_invoices_by_email). Never guess.")],
+) -> dict[str, Any]:
+    """Get the individual line items (products/services) on a specific invoice. Returns: lines, status, total, client_id."""
     try:
         invoice = await _fb("admin/invoice/get", {"id": invoice_id})
         lines = invoice.get("lines", [])
@@ -339,7 +346,10 @@ async def get_revenue_summary() -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_registration_invoices(status: str | None = None, limit: int = 100) -> dict[str, Any]:
+async def get_registration_invoices(
+    status: Annotated[str | None, Field(description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all.")] = None,
+    limit: Annotated[int, Field(description="Max invoices to return (default 100).")] = 100,
+) -> dict[str, Any]:
     """
     Get invoices that contain registration fees ('Inschrijvingskosten').
     These come from new_registration messages. Optionally filter by status.
@@ -387,14 +397,13 @@ async def check_fossbilling_status() -> dict[str, Any]:
 # ─────────────────────────────────────────────
 
 @mcp.tool()
-async def get_pending_consumptions(company_id: str | None = None) -> dict[str, Any]:
+async def get_pending_consumptions(
+    company_id: Annotated[str | None, Field(description="Filter by company ID (from company_accounts or CRM). Omit to get all pending consumptions.")] = None,
+) -> dict[str, Any]:
     """
-    Get all pending consumption items waiting to be invoiced after event end.
-    Optionally filter by company_id. These are accumulated bar/catering orders per company.
-
-    Consumption items in the post-event invoicing staging area (MySQL).
-    For LIVE POS orders during the event use `kassa__get_recent_orders`;
-    for the CRM master record use `crm__list_consumptions`.
+    Get pending consumption items waiting to be invoiced after event end.
+    These are bar/catering orders in the MySQL staging area.
+    For LIVE POS orders use kassa__get_recent_orders; for CRM master records use crm__list_consumptions.
     """
     try:
         if company_id:
@@ -525,12 +534,12 @@ async def get_pending_consumption_stats() -> dict[str, Any]:
 # ─────────────────────────────────────────────
 
 @mcp.tool()
-async def get_invoice_registry(limit: int = 50) -> dict[str, Any]:
+async def get_invoice_registry(
+    limit: Annotated[int, Field(description="Max registry entries to return (default 50, max 500).")] = 50,
+) -> dict[str, Any]:
     """
     List entries from the local invoice registry (invoice_id ↔ correlation_id mappings).
-    This tracks which FossBilling invoice corresponds to each integration message.
-
-    The ONLY way to trace a specific RabbitMQ message through to its invoice.
+    The ONLY way to trace a RabbitMQ message through to its FossBilling invoice.
     """
     try:
         rows = await _query(
@@ -544,10 +553,11 @@ async def get_invoice_registry(limit: int = 50) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def lookup_invoice_by_correlation(correlation_id: str) -> dict[str, Any]:
+async def lookup_invoice_by_correlation(
+    correlation_id: Annotated[str, Field(description="RabbitMQ correlation_id (UUID format) from a monitoring log entry or integration message. Get it from get_invoice_registry or from a log entry's correlation_id field.")],
+) -> dict[str, Any]:
     """
     Look up the FossBilling invoice_id linked to a specific RabbitMQ correlation_id.
-
     The ONLY way to trace a specific message through to its invoice.
     """
     try:
@@ -563,10 +573,11 @@ async def lookup_invoice_by_correlation(correlation_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_registry_by_type(invoice_type: str) -> dict[str, Any]:
+async def get_registry_by_type(
+    invoice_type: Annotated[str, Field(description="Invoice type to filter by: 'registration' (new member fees) or 'consumption' (bar/catering orders).")],
+) -> dict[str, Any]:
     """
     Get registry entries filtered by invoice type.
-    invoice_type: 'registration' | 'consumption'
     """
     try:
         rows = await _query(
@@ -623,11 +634,12 @@ async def get_company_billing_accounts() -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_company_billing_account(company_id: str) -> dict[str, Any]:
+async def get_company_billing_account(
+    company_id: Annotated[str, Field(description="The company ID from Kassa/CRM (not a FossBilling client_id). Use get_company_billing_accounts() to list all known company IDs.")],
+) -> dict[str, Any]:
     """
-    Look up the FossBilling client mapping for a specific company_id.
-
-    Bridges Kassa/CRM company_id → FossBilling client_id.
+    Look up the FossBilling client mapping for a company.
+    Returns FossBilling client_id for use in get_client_invoices/get_client_balance.
     """
     try:
         rows = await _query(
@@ -642,10 +654,12 @@ async def get_company_billing_account(company_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_company_pending_and_billing(company_id: str) -> dict[str, Any]:
+async def get_company_pending_and_billing(
+    company_id: Annotated[str, Field(description="The company ID from Kassa/CRM. Use get_company_billing_accounts() to list all valid company IDs.")],
+) -> dict[str, Any]:
     """
-    Combined view for a company: their FossBilling client ID, pending
-    consumption items and total outstanding amount.
+    Combined view for a company: FossBilling client ID, pending consumptions, outstanding total.
+    Single call to get both billing account and pending items.
     """
     billing_task = get_company_billing_account(company_id)
     pending_task = get_pending_consumptions(company_id)
