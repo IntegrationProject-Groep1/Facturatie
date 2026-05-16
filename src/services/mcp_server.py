@@ -101,86 +101,20 @@ async def _scalar(sql: str, args: tuple = ()):
 
 
 # ─────────────────────────────────────────────
-#  FOSSBILLING — CLIENTS
+#  FOSSBILLING — CLIENTS (internal helpers only)
+#  For person identity queries use CRM (crm__get_member_by_email etc.)
 # ─────────────────────────────────────────────
 
-@mcp.tool()
-async def list_clients(
-    limit: int = 50,
-    page: int = 1,
-    search: str | None = None,
-) -> dict[str, Any]:
-    """
-    List FossBilling clients (registered payers).
-    Optionally search by email, name, or company name.
-
-    FossBilling billing accounts (a SUBSET of people: only those who have been
-    invoiced). NOT website login accounts (use Frontend) and NOT full member
-    profiles (use CRM). A FossBilling client_id is NOT the same as a CRM Master_UUID.
-    """
-    payload: dict = {"per_page": min(limit, 200), "page": page}
-    if search:
-        payload["search"] = search
-    try:
-        result = await _fb("admin/client/get_list", payload)
-        return {
-            "clients": result.get("list", []),
-            "total":   result.get("total", 0),
-            "page":    page,
-            "limit":   limit,
-        }
-    except Exception as exc:
-        return _err(exc, clients=[])
-
-
-@mcp.tool()
-async def get_client(client_id: int) -> dict[str, Any]:
-    """
-    Get full details for a single FossBilling client by their numeric ID.
-
-    FossBilling billing account, NOT the same as a CRM member or Drupal user.
-    """
-    try:
-        return await _fb("admin/client/get", {"id": client_id})
-    except Exception as exc:
-        return _err(exc, client_id=client_id)
-
-
-@mcp.tool()
-async def search_clients(query: str) -> dict[str, Any]:
-    """
-    Search FossBilling clients by email, name, or company name.
-
-    Billing accounts only. For full member-profile search use `crm__search_members`;
-    for Drupal users use `frontend__search_users`.
-    """
-    try:
-        result = await _fb("admin/client/get_list", {"search": query, "per_page": 100})
-        return {"clients": result.get("list", []), "total": result.get("total", 0), "query": query}
-    except Exception as exc:
-        return _err(exc, clients=[])
-
-
-@mcp.tool()
-async def get_client_by_email(email: str) -> dict[str, Any]:
-    """
-    Look up a FossBilling client by their exact email address.
-
-    Billing account only. For full member profile use `crm__get_member_by_email`;
-    for Drupal website account use `frontend__get_user_by_email`. The same email
-    may exist in all three systems with different IDs.
-    """
-    try:
-        result = await _fb("admin/client/get_list", {"search": email, "per_page": 10})
-        clients = result.get("list", [])
-        match = next((c for c in clients if c.get("email", "").lower() == email.lower()), None)
-        if not match and clients:
-            match = clients[0]
-        if not match:
-            return _err(f"No client found with email '{email}'")
-        return match
-    except Exception as exc:
-        return _err(exc, email=email)
+async def _get_client_by_email(email: str) -> dict[str, Any]:
+    """Internal: resolve FossBilling client record by email."""
+    result = await _fb("admin/client/get_list", {"search": email, "per_page": 10})
+    clients = result.get("list", [])
+    match = next((c for c in clients if c.get("email", "").lower() == email.lower()), None)
+    if not match and clients:
+        match = clients[0]
+    if not match:
+        raise ValueError(f"No FossBilling client found with email '{email}'")
+    return match
 
 
 @mcp.tool()
@@ -205,6 +139,26 @@ async def get_client_invoices(
         }
     except Exception as exc:
         return _err(exc, client_id=client_id, invoices=[])
+
+
+@mcp.tool()
+async def get_invoices_by_email(
+    email: str,
+    status: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """
+    Get invoices for a person by their email address.
+    status: 'unpaid' | 'paid' | 'cancelled' | 'refunded' | None (all).
+    Resolves the FossBilling client internally — no separate client lookup needed.
+    Primary tool for 'what invoices does X have?' or 'does X have outstanding bills?'
+    """
+    try:
+        client = await _get_client_by_email(email)
+        client_id = client.get("id")
+        return await get_client_invoices(client_id, status=status, limit=limit)
+    except Exception as exc:
+        return _err(exc, email=email, invoices=[])
 
 
 @mcp.tool()
