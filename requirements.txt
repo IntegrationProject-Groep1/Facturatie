@@ -1,4 +1,4 @@
-fastmcp
+fastmcp>=3.3.1,<4.0
 httpx
 aiomysql
 blinker==1.9.0
