@@ -30,10 +30,10 @@ from fastmcp import FastMCP
 mcp = FastMCP("facturatie")
 
 # ── FossBilling ───────────────────────────────────────────────────
-_API_URL  = os.getenv("BILLING_API_URL",      "http://fossbilling/api").rstrip("/")
+_API_URL = os.getenv("BILLING_API_URL",      "http://fossbilling/api").rstrip("/")
 _API_USER = os.getenv("BILLING_API_USERNAME", "admin")
 _API_TOKEN = os.getenv("BILLING_API_TOKEN",   "")
-_HEADERS  = {"X-Forwarded-Proto": "https"}
+_HEADERS = {"X-Forwarded-Proto": "https"}
 
 _http = httpx.AsyncClient(timeout=15.0)
 
@@ -289,7 +289,7 @@ async def get_invoice_line_items(invoice_id: int) -> dict[str, Any]:
     """Get the individual line items (products/services) on a specific invoice."""
     try:
         invoice = await _fb("admin/invoice/get", {"id": invoice_id})
-        lines   = invoice.get("lines", [])
+        lines = invoice.get("lines", [])
         return {
             "invoice_id": invoice_id,
             "status":     invoice.get("status"),
@@ -319,10 +319,10 @@ async def get_revenue_summary() -> dict[str, Any]:
 
     for status in statuses:
         try:
-            result   = await _fb("admin/invoice/get_list", {"status": status, "per_page": 200})
+            result = await _fb("admin/invoice/get_list", {"status": status, "per_page": 200})
             invoices = result.get("list", [])
-            total    = result.get("total", len(invoices))
-            amount   = sum(float(inv.get("total", 0)) for inv in invoices)
+            total = result.get("total", len(invoices))
+            amount = sum(float(inv.get("total", 0)) for inv in invoices)
             summary[status] = {"count": total, "amount_eur": round(amount, 2)}
             if status == "paid":
                 total_paid = amount
@@ -348,13 +348,13 @@ async def get_registration_invoices(status: str | None = None, limit: int = 100)
         payload: dict = {"per_page": min(limit, 200)}
         if status:
             payload["status"] = status
-        result   = await _fb("admin/invoice/get_list", payload)
+        result = await _fb("admin/invoice/get_list", payload)
         invoices = result.get("list", [])
         reg_invs = []
         for inv in invoices:
             # Check if invoice_type from registry is registration, or try to detect from lines
             lines = inv.get("lines", [])
-            is_reg = any("inschrijvingskosten" in str(l.get("title", "")).lower() for l in lines)
+            is_reg = any("inschrijvingskosten" in str(line.get("title", "")).lower() for line in lines)
             if is_reg:
                 reg_invs.append(inv)
         return {"invoices": reg_invs, "count": len(reg_invs)}
@@ -376,7 +376,7 @@ async def get_payment_gateways() -> dict[str, Any]:
 async def check_fossbilling_status() -> dict[str, Any]:
     """Check if the FossBilling API is reachable and credentials are valid."""
     try:
-        result = await _fb("admin/client/get_list", {"per_page": 1})
+        await _fb("admin/client/get_list", {"per_page": 1})
         return {"status": "online", "api_url": _API_URL}
     except Exception as exc:
         return {"status": "offline", "error": str(exc), "api_url": _API_URL}
@@ -704,7 +704,8 @@ async def get_facturatie_overview() -> dict[str, Any]:
 
 def _clean_row(row: dict) -> dict:
     """Convert MySQL Decimal and datetime values to JSON-serializable types."""
-    import decimal, datetime
+    import decimal
+    import datetime
     out = {}
     for k, v in row.items():
         if isinstance(v, decimal.Decimal):
