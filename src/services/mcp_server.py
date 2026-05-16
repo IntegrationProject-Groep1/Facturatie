@@ -117,8 +117,15 @@ async def _get_client_by_email(email: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_client_invoices(
-    client_id: Annotated[int, Field(description="FossBilling numeric client ID. Get it from get_company_billing_account(company_id) or from a previous invoice result. Do not guess.")],
-    status: Annotated[str | None, Field(description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all statuses.")] = None,
+    client_id: Annotated[int, Field(
+        description=(
+            "FossBilling numeric client ID. Get it from get_company_billing_account(company_id)"
+            " or from a previous invoice result. Do not guess."
+        ),
+    )],
+    status: Annotated[str | None, Field(
+        description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all statuses.",
+    )] = None,
     limit: Annotated[int, Field(description="Max invoices to return (default 50, max 200).")] = 50,
 ) -> dict[str, Any]:
     """
@@ -141,8 +148,12 @@ async def get_client_invoices(
 
 @mcp.tool()
 async def get_invoices_by_email(
-    email: Annotated[str, Field(description="The person's email address (must include @). Resolves FossBilling client internally.")],
-    status: Annotated[str | None, Field(description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all.")] = None,
+    email: Annotated[str, Field(
+        description="The person's email address (must include @). Resolves FossBilling client internally.",
+    )],
+    status: Annotated[str | None, Field(
+        description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all.",
+    )] = None,
     limit: Annotated[int, Field(description="Max invoices to return (default 50).")] = 50,
 ) -> dict[str, Any]:
     """
@@ -160,7 +171,9 @@ async def get_invoices_by_email(
 
 @mcp.tool()
 async def get_client_balance(
-    client_id: Annotated[int, Field(description="FossBilling numeric client ID. Get it from get_company_billing_account(company_id) — never guess.")],
+    client_id: Annotated[int, Field(
+        description="FossBilling numeric client ID. Get it from get_company_billing_account(company_id) — never guess.",
+    )],
 ) -> dict[str, Any]:
     """Get the outstanding (unpaid) invoice total for a client. Returns unpaid count and total EUR amount."""
     try:
@@ -186,7 +199,12 @@ async def get_client_balance(
 
 @mcp.tool()
 async def list_invoices(
-    status: Annotated[str | None, Field(description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all. Use 'unpaid' for outstanding receivables.")] = None,
+    status: Annotated[str | None, Field(
+        description=(
+            "Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'."
+            " Omit for all. Use 'unpaid' for outstanding receivables."
+        ),
+    )] = None,
     limit: Annotated[int, Field(description="Max invoices per page (default 50, max 200).")] = 50,
     page: Annotated[int, Field(description="Page number for pagination (default 1).")] = 1,
 ) -> dict[str, Any]:
@@ -211,7 +229,9 @@ async def list_invoices(
 
 @mcp.tool()
 async def get_invoice(
-    invoice_id: Annotated[int, Field(description="FossBilling invoice numeric ID (from list_invoices or get_invoices_by_email). Never guess.")],
+    invoice_id: Annotated[int, Field(
+        description="FossBilling invoice numeric ID (from list_invoices or get_invoices_by_email). Never guess.",
+    )],
 ) -> dict[str, Any]:
     """Get the full invoice object from FossBilling, including line items, client, and status."""
     try:
@@ -232,7 +252,9 @@ async def get_recent_invoices(
 async def get_invoices_by_date_range(
     start_date: Annotated[str, Field(description="Start date in format 'YYYY-MM-DD', e.g. '2026-05-01'.")],
     end_date: Annotated[str, Field(description="End date in format 'YYYY-MM-DD', e.g. '2026-05-31'.")],
-    status: Annotated[str | None, Field(description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all.")] = None,
+    status: Annotated[str | None, Field(
+        description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all.",
+    )] = None,
     limit: Annotated[int, Field(description="Max invoices to return (default 100).")] = 100,
 ) -> dict[str, Any]:
     """
@@ -291,9 +313,11 @@ async def get_overdue_invoices(
 
 @mcp.tool()
 async def get_invoice_line_items(
-    invoice_id: Annotated[int, Field(description="FossBilling invoice numeric ID (from list_invoices or get_invoices_by_email). Never guess.")],
+    invoice_id: Annotated[int, Field(
+        description="FossBilling invoice numeric ID (from list_invoices or get_invoices_by_email). Never guess.",
+    )],
 ) -> dict[str, Any]:
-    """Get the individual line items (products/services) on a specific invoice. Returns: lines, status, total, client_id."""
+    """Get the individual line items on a specific invoice. Returns: lines, status, total, client_id."""
     try:
         invoice = await _fb("admin/invoice/get", {"id": invoice_id})
         lines = invoice.get("lines", [])
@@ -347,7 +371,9 @@ async def get_revenue_summary() -> dict[str, Any]:
 
 @mcp.tool()
 async def get_registration_invoices(
-    status: Annotated[str | None, Field(description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all.")] = None,
+    status: Annotated[str | None, Field(
+        description="Filter by status: 'unpaid', 'paid', 'cancelled', 'refunded'. Omit for all.",
+    )] = None,
     limit: Annotated[int, Field(description="Max invoices to return (default 100).")] = 100,
 ) -> dict[str, Any]:
     """
@@ -398,7 +424,9 @@ async def check_fossbilling_status() -> dict[str, Any]:
 
 @mcp.tool()
 async def get_pending_consumptions(
-    company_id: Annotated[str | None, Field(description="Filter by company ID (from company_accounts or CRM). Omit to get all pending consumptions.")] = None,
+    company_id: Annotated[str | None, Field(
+        description="Filter by company ID (from company_accounts or CRM). Omit to get all pending consumptions.",
+    )] = None,
 ) -> dict[str, Any]:
     """
     Get pending consumption items waiting to be invoiced after event end.
@@ -554,7 +582,12 @@ async def get_invoice_registry(
 
 @mcp.tool()
 async def lookup_invoice_by_correlation(
-    correlation_id: Annotated[str, Field(description="RabbitMQ correlation_id (UUID format) from a monitoring log entry or integration message. Get it from get_invoice_registry or from a log entry's correlation_id field.")],
+    correlation_id: Annotated[str, Field(
+        description=(
+            "RabbitMQ correlation_id (UUID format) from a monitoring log entry or integration message."
+            " Get it from get_invoice_registry or from a log entry's correlation_id field."
+        ),
+    )],
 ) -> dict[str, Any]:
     """
     Look up the FossBilling invoice_id linked to a specific RabbitMQ correlation_id.
@@ -574,7 +607,9 @@ async def lookup_invoice_by_correlation(
 
 @mcp.tool()
 async def get_registry_by_type(
-    invoice_type: Annotated[str, Field(description="Invoice type to filter by: 'registration' (new member fees) or 'consumption' (bar/catering orders).")],
+    invoice_type: Annotated[str, Field(
+        description="Invoice type: 'registration' (new member fees) or 'consumption' (bar/catering orders).",
+    )],
 ) -> dict[str, Any]:
     """
     Get registry entries filtered by invoice type.
@@ -635,7 +670,12 @@ async def get_company_billing_accounts() -> dict[str, Any]:
 
 @mcp.tool()
 async def get_company_billing_account(
-    company_id: Annotated[str, Field(description="The company ID from Kassa/CRM (not a FossBilling client_id). Use get_company_billing_accounts() to list all known company IDs.")],
+    company_id: Annotated[str, Field(
+        description=(
+            "The company ID from Kassa/CRM (not a FossBilling client_id)."
+            " Use get_company_billing_accounts() to list all known company IDs."
+        ),
+    )],
 ) -> dict[str, Any]:
     """
     Look up the FossBilling client mapping for a company.
@@ -655,7 +695,9 @@ async def get_company_billing_account(
 
 @mcp.tool()
 async def get_company_pending_and_billing(
-    company_id: Annotated[str, Field(description="The company ID from Kassa/CRM. Use get_company_billing_accounts() to list all valid company IDs.")],
+    company_id: Annotated[str, Field(
+        description="The company ID from Kassa/CRM. Use get_company_billing_accounts() to list all valid company IDs.",
+    )],
 ) -> dict[str, Any]:
     """
     Combined view for a company: FossBilling client ID, pending consumptions, outstanding total.
