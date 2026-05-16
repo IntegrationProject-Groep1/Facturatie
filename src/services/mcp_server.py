@@ -107,14 +107,11 @@ async def _scalar(sql: str, args: tuple = ()):
 
 async def _get_client_by_email(email: str) -> dict[str, Any]:
     """Internal: resolve FossBilling client record by email."""
-    result = await _fb("admin/client/get_list", {"search": email, "per_page": 10})
+    result = await _fb("admin/client/get_list", {"search": email, "per_page": 50})
     clients = result.get("list", [])
     match = next((c for c in clients if c.get("email", "").lower() == email.lower()), None)
-    if not match and clients:
-        match = clients[0]
     if not match:
         raise ValueError(f"No FossBilling client found with email '{email}'")
-    return match
 
 
 @mcp.tool()
@@ -225,6 +222,66 @@ async def get_invoice(invoice_id: int) -> dict[str, Any]:
 async def get_recent_invoices(limit: int = 20) -> dict[str, Any]:
     """Get the most recently created invoices (all statuses)."""
     return await list_invoices(limit=limit, page=1)
+
+
+@mcp.tool()
+async def get_invoices_by_date_range(
+    start_date: str,
+    end_date: str,
+    status: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """
+    Get invoices created between start_date and end_date (format: 'YYYY-MM-DD').
+    Optionally filter by status: 'unpaid' | 'paid' | 'cancelled' | 'refunded'.
+    Useful for 'invoices from last month' or 'invoices from the event weekend'.
+    """
+    payload: dict = {"per_page": min(limit, 200), "date_from": start_date, "date_to": end_date}
+    if status:
+        payload["status"] = status
+    try:
+        result = await _fb("admin/invoice/get_list", payload)
+        invoices = result.get("list", [])
+        return {
+            "invoices": invoices,
+            "total": result.get("total", len(invoices)),
+            "start_date": start_date,
+            "end_date": end_date,
+            "status": status,
+        }
+    except Exception as exc:
+        return _err(exc, invoices=[])
+
+
+@mcp.tool()
+async def get_overdue_invoices(limit: int = 50) -> dict[str, Any]:
+    """
+    Get unpaid invoices whose due date has already passed.
+    Sorted oldest-first so the most overdue appear first.
+    Use this for collections, chasing payments, or overdue reporting.
+    """
+    from datetime import date
+    today = date.today().isoformat()
+    try:
+        result = await _fb("admin/invoice/get_list", {
+            "status": "unpaid",
+            "per_page": min(limit, 200),
+        })
+        invoices = result.get("list", [])
+        overdue = [
+            inv for inv in invoices
+            if inv.get("due_date") and inv["due_date"] < today
+        ]
+        overdue.sort(key=lambda inv: inv.get("due_date", ""))
+        total_eur = round(sum(float(inv.get("total", 0)) for inv in overdue), 2)
+        return {
+            "invoices": overdue,
+            "count": len(overdue),
+            "total_overdue_eur": total_eur,
+            "as_of": today,
+        }
+    except Exception as exc:
+        return _err(exc, invoices=[])
 
 
 @mcp.tool()
@@ -460,7 +517,7 @@ async def get_pending_consumption_stats() -> dict[str, Any]:
             "newest_item_at":  r.get("newest_item"),
         }
     except Exception as exc:
-        return _err(exc)
+        return _err(exc, total_items=0, total_companies=0, total_value_eur=0)
 
 
 # ─────────────────────────────────────────────
