@@ -406,15 +406,15 @@ def build_invoice_link_xml(
     invoice_id: str,
     master_uuid: str,
     source: str = "facturatie",
+    status: str = "sent",
+    invoice_date: str = "",
+    base64_data: str = "",
 ) -> str:
-    """
-    Builds an invoice_available XML message to be sent to the Frontend team.
-    Queue: facturatie.to.frontend
-    """
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    billing_web_base = os.getenv("BILLING_WEB_URL", "https://portal.yourdomain.com").rstrip("/")
-    pdf_url = f"{billing_web_base}/invoice/{invoice_id}"
+
+    if not invoice_date:
+        invoice_date = timestamp
 
     root = ET.Element("message")
 
@@ -428,7 +428,9 @@ def build_invoice_link_xml(
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "identity_uuid").text = master_uuid
     ET.SubElement(body, "invoice_id").text = invoice_id
-    ET.SubElement(body, "pdf_url").text = pdf_url
+    ET.SubElement(body, "status").text = status
+    ET.SubElement(body, "invoice_date").text = invoice_date
+    ET.SubElement(body, "base64_data").text = base64_data
 
     ET.indent(root, space="    ")
     xml_str = (
@@ -447,9 +449,16 @@ def publish_invoice_link(
     invoice_id: str,
     master_uuid: str,
     channel: pika.channel.Channel | None = None,
+    status: str = "sent",
+    invoice_date: str = "",
+    base64_data: str = "",
 ) -> None:
-    """Publishes an invoice_available notification to the Frontend queue."""
-    xml_message = build_invoice_link_xml(invoice_id, master_uuid)
+    xml_message = build_invoice_link_xml(
+        invoice_id, master_uuid,
+        status=status,
+        invoice_date=invoice_date,
+        base64_data=base64_data,
+    )
     send_message(xml_message, routing_key=FRONTEND_QUEUE, channel=channel)
     logging.info(
         "[SENDER] invoice_link sent to '%s' | invoice_id=%s | master_uuid=%s",

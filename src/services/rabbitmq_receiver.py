@@ -2,6 +2,7 @@ import logging
 import pika
 import pika.channel
 import pika.spec
+import base64
 from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
@@ -378,9 +379,15 @@ def process_message(
             except Exception as status_err:
                 logging.warning("[RECEIVER] invoice_status failed for invoice_request: %s", status_err)
 
+            _inv_data = None
+            _base64 = ""
+
             try:
                 _inv_data = get_invoice(invoice_id)
-                _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id, invoice_hash=(_inv_data or {}).get("hash"))
+                _pdf_bytes = fossbilling_client.get_invoice_pdf(
+                    invoice_id, invoice_hash=(_inv_data or {}).get("hash")
+                )
+                _base64 = base64.b64encode(_pdf_bytes).decode("utf-8")
                 notification_xml = build_invoice_created_notification_xml(
                     invoice_id=invoice_id,
                     recipient_email=customer["email"],
@@ -397,7 +404,14 @@ def process_message(
                 logging.warning("[RECEIVER] Invoice created but mailing failed: %s", mail_err)
 
             try:
-                publish_invoice_link(invoice_id, user_id, channel=channel)
+                publish_invoice_link(
+                    invoice_id,
+                    user_id,
+                    channel=channel,
+                    status=(_inv_data or {}).get("status", "sent"),
+                    invoice_date=(_inv_data or {}).get("created_at", ""),
+                    base64_data=_base64,
+                )
             except Exception as link_err:
                 logging.warning("[RECEIVER] Invoice created but invoice_link failed: %s", link_err)
 
@@ -516,10 +530,14 @@ def process_message(
                         channel=channel,
                     )
 
+                    _inv_data = None
+                    _base64 = ""
+
                     try:
                         _inv_data = get_invoice(invoice_id)
                         _inv_hash = (_inv_data or {}).get("hash")
                         _pdf_bytes = fossbilling_client.get_invoice_pdf(invoice_id, invoice_hash=_inv_hash)
+                        _base64 = base64.b64encode(_pdf_bytes).decode("utf-8")
                         notification_xml = build_invoice_created_notification_xml(
                             invoice_id=invoice_id,
                             recipient_email=meta["email"],
@@ -537,11 +555,19 @@ def process_message(
                         errors.append(f"company_id={company_id}: mailing_failed: {mail_err}")
 
                     try:
-                        publish_invoice_link(invoice_id, master_uuid, channel=channel)
+                        publish_invoice_link(
+                            invoice_id,
+                            master_uuid,
+                            channel=channel,
+                            status=(_inv_data or {}).get("status", "sent"),
+                            invoice_date=(_inv_data or {}).get("created_at", ""),
+                            base64_data=_base64,
+                        )
                     except Exception as link_err:
                         logging.warning(
-                            "[RECEIVER] Invoice created but invoice_link failed for %s: %s", company_id, link_err
-                            )
+                            "[RECEIVER] Invoice created but invoice_link failed for %s: %s",
+                            company_id, link_err
+                        )
 
                     logging.info(
                         "[RECEIVER] event_ended: invoice processed | company_id=%s | invoice_id=%s",
