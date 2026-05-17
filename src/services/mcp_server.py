@@ -130,7 +130,8 @@ async def get_client_invoices(
 ) -> dict[str, Any]:
     """
     Get all invoices for a specific FossBilling client, optionally filtered by status.
-    Use after get_company_billing_account() to resolve the client_id. Authoritative billing data — NOT from monitoring or CRM.
+    Use after get_company_billing_account() to resolve the client_id.
+    Authoritative billing data — NOT from monitoring or CRM.
     """
     payload: dict = {"client_id": client_id, "per_page": min(limit, 200)}
     if status:
@@ -244,7 +245,8 @@ async def get_invoice(
 async def get_recent_invoices(
     limit: Annotated[int, Field(description="Max invoices to return (default 20).")] = 20,
 ) -> dict[str, Any]:
-    """Get the most recently created invoices across all clients and statuses. Useful for a quick overview of recent billing activity without knowing a specific client or company."""
+    """Get the most recently created invoices across all clients and statuses.
+    Useful for a quick overview of recent billing activity without knowing a specific client or company."""
     return await list_invoices(limit=limit, page=1)
 
 
@@ -317,7 +319,9 @@ async def get_invoice_line_items(
         description="FossBilling invoice numeric ID (from list_invoices or get_invoices_by_email). Never guess.",
     )],
 ) -> dict[str, Any]:
-    """Get the individual line items (products, quantities, unit prices) on a specific invoice. Returns line details, invoice status, total, and client_id. Use to answer questions like 'what exactly was on invoice #42?'."""
+    """Get the individual line items (products, quantities, unit prices) on a specific invoice.
+       Returns line details, invoice status, total, and client_id.
+       Use to answer questions like 'what exactly was on invoice #42?'."""
     try:
         invoice = await _fb("admin/invoice/get", {"id": invoice_id})
         lines = invoice.get("lines", [])
@@ -377,7 +381,8 @@ async def get_registration_invoices(
     limit: Annotated[int, Field(description="Max invoices to return (default 100).")] = 100,
 ) -> dict[str, Any]:
     """
-    Get invoices generated from new_registration RabbitMQ messages — these contain 'Inschrijvingskosten' (registration fee) line items.
+    Get invoices generated from new_registration RabbitMQ messages
+    — these contain 'Inschrijvingskosten' (registration fee) line items.
     Optionally filter by payment status. Use when an admin asks about outstanding or paid registration fees.
     """
     try:
@@ -400,13 +405,13 @@ async def get_registration_invoices(
 
 @mcp.tool()
 async def get_payment_gateways() -> dict[str, Any]:
-    """List all configured payment gateways in FossBilling (e.g. Stripe, bank transfer). Use when an admin asks which payment methods are available or active."""
+    """List all configured payment gateways in FossBilling (e.g. Stripe, bank transfer).
+       Use when an admin asks which payment methods are available or active."""
     try:
         result = await _fb("admin/invoice/gateway_get_list", {})
         return {"gateways": result.get("list", [])}
     except Exception as exc:
         return _err(exc, gateways=[])
-
 
 
 # ─────────────────────────────────────────────
@@ -577,7 +582,6 @@ async def lookup_invoice_by_correlation(
         return _err(exc, correlation_id=correlation_id)
 
 
-
 # ─────────────────────────────────────────────
 #  MYSQL — COMPANY ACCOUNTS
 # ─────────────────────────────────────────────
@@ -670,7 +674,6 @@ async def get_facturatie_overview() -> dict[str, Any]:
     revenue, pending_stats, registry_stats, companies_pending = await asyncio.gather(
         get_revenue_summary(),
         get_pending_consumption_stats(),
-        get_registry_stats(),
         get_companies_with_pending(),
     )
     return {
@@ -712,7 +715,9 @@ def _clean_row(row: dict) -> dict:
 
 @mcp.tool()
 async def mark_invoice_paid(
-    invoice_id: Annotated[int, Field(description="FossBilling invoice ID. Get it from get_invoices_by_email or list_invoices — never guess.")],
+    invoice_id: Annotated[
+        int,
+        Field(description="FossBilling invoice ID. Get it from get_invoices_by_email or list_invoices — never guess.")],
 ) -> dict[str, Any]:
     """
     Mark a FossBilling invoice as paid. WRITE OPERATION — confirm with admin before calling.
