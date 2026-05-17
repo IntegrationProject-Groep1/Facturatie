@@ -98,7 +98,6 @@ def build_new_registration_xml(
     ET.SubElement(customer, "type").text = "company"
     ET.SubElement(customer, "company_name").text = "Test Company NV"
     ET.SubElement(customer, "vat_number").text = "BE0123456789"
-    ET.SubElement(customer, "company_id").text = "comp-001"
 
     payment_due = ET.SubElement(customer, "payment_due")
     amount_el = ET.SubElement(payment_due, "amount", {"currency": "eur"})
