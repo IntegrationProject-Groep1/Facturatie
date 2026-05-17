@@ -486,7 +486,8 @@ def cancel_invoice(invoice_id: str) -> bool:
     Returns True on success, False on any failure.
     """
     try:
-        _api_post("admin/invoice/update", {"id": invoice_id, "status": "cancelled"})
+        response = _api_post("admin/invoice/update", {"id": invoice_id, "status": "cancelled"})
+        logging.info("[FOSSBILLING] cancel_invoice response for '%s': %s", invoice_id, response)
         logging.info("[FOSSBILLING] Invoice '%s' successfully marked as cancelled", invoice_id)
         return True
     except Exception as e:
