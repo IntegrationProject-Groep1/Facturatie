@@ -598,12 +598,16 @@ def process_message(
             if invoice_el is None:
                 raise ValueError("Missing <invoice> element")
 
-            invoice_id = invoice_el.findtext("id")
+            invoice_id = invoice_el.findtext("id") or ""
 
             due_date = invoice_el.findtext("due_date") or ""
 
             if not invoice_id:
-                raise ValueError("Missing invoice id in <invoice><id>")
+                header_correlation_id = root.findtext("header/correlation_id") or ""
+                if header_correlation_id:
+                    invoice_id = consumption_store.get_invoice_id_by_correlation_id(header_correlation_id)
+                if not invoice_id:
+                    raise ValueError("Missing invoice id and could not resolve via correlation_id")
 
             amount_el = invoice_el.find("amount_paid")
             amount = amount_el.text if amount_el is not None else None
